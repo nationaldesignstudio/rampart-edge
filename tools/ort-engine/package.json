@@ -1,0 +1,14 @@
+{
+  "name": "rampart-ort-engine",
+  "private": true,
+  "type": "module",
+  "description": "Build + verify a reduced-ops onnxruntime-web CPU engine for the Rampart PII model",
+  "scripts": {
+    "measure": "node measure.mjs",
+    "compare": "node compare.mjs"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "4.2.0",
+    "onnxruntime-web": "1.26.0-dev.20260416-b7804b056c"
+  }
+}

@@ -1,0 +1,62 @@
+{
+  "model_id": "nationaldesignstudio/rampart-edge",
+  "task": "joint-gate-span",
+  "labels": [
+    "ALLOW",
+    "BLOCK"
+  ],
+  "base_model": "microsoft/xtremedistil-l6-h256-uncased",
+  "architecture": {
+    "layers": 4,
+    "tied_layers": "first",
+    "hidden_size": 256,
+    "embedding_rank": 48,
+    "vocab_size": 23910,
+    "quantization": "MatMulNBits 4-bit, block size 32"
+  },
+  "inputs": [
+    "input_ids",
+    "attention_mask"
+  ],
+  "output": [
+    "gate_logit",
+    "token_logits"
+  ],
+  "span_head": "typed",
+  "span_labels": [
+    "O",
+    "B-NAME",
+    "I-NAME",
+    "B-ADDRESS",
+    "I-ADDRESS",
+    "B-EMAIL",
+    "I-EMAIL",
+    "B-PHONE",
+    "I-PHONE",
+    "B-GOV_ID",
+    "I-GOV_ID",
+    "B-FINANCIAL",
+    "I-FINANCIAL",
+    "B-DOB_KEYED",
+    "I-DOB_KEYED",
+    "B-URL_HANDLE",
+    "I-URL_HANDLE",
+    "B-OTHER_ID",
+    "I-OTHER_ID"
+  ],
+  "span_threshold": null,
+  "block_threshold": 0.417801,
+  "max_tokens": 384,
+  "stride": 96,
+  "window_combination": "max",
+  "files": {
+    "onnx/model_q4.onnx": {
+      "bytes": 1454373,
+      "sha256": "73fce00c229d8318d7e1f8decccc5ad2dbf7aa45a872364b54d632c38a9eb16c"
+    },
+    "vocab.txt": {
+      "bytes": 173327,
+      "sha256": "ee0684683c7fb15744d0136e671cd7def76ae4d4ddafb72ced864e94c8d32c9a"
+    }
+  }
+}

@@ -1,0 +1,2 @@
+model/onnx/*.onnx filter=lfs diff=lfs merge=lfs -text
+runtime/*.wasm filter=lfs diff=lfs merge=lfs -text

@@ -1,0 +1,399 @@
+{
+  "tokenizer": [
+    {
+      "text": "I am trying to understand how the passport renewal process works and which form I should use if my previous passport was issued more than fifteen years ago. Also, my Medicare number is 3CX7-MK2-PW45 if that helps.",
+      "ids": [
+        51,
+        1577,
+        1672,
+        1006,
+        2310,
+        1135,
+        1002,
+        10857,
+        12733,
+        1837,
+        1578,
+        1004,
+        1035,
+        1438,
+        51,
+        1328,
+        1229,
+        1071,
+        1032,
+        2030,
+        10857,
+        1007,
+        2847,
+        1068,
+        1090,
+        4413,
+        1092,
+        2288,
+        18,
+        1042,
+        16,
+        1032,
+        21836,
+        1198,
+        1009,
+        23,
+        1283,
+        1600,
+        1586,
+        17,
+        10946,
+        1480,
+        17,
+        58,
+        1865,
+        16956,
+        1071,
+        1014,
+        6086,
+        18
+      ]
+    },
+    {
+      "text": "Hello world",
+      "ids": [
+        6538,
+        1094
+      ]
+    },
+    {
+      "text": "My SSN is 452-78-1934 and I need to fix my tax return.",
+      "ids": [
+        1032,
+        5986,
+        1084,
+        1009,
+        2434,
+        1480,
+        17,
+        5255,
+        17,
+        3579,
+        1004,
+        51,
+        1347,
+        1006,
+        7014,
+        1032,
+        3172,
+        1714,
+        18
+      ]
+    },
+    {
+      "text": "\u00bfC\u00f3mo renuevo mi pasaporte estadounidense desde M\u00e9xico?",
+      "ids": [
+        100,
+        15954,
+        13067,
+        4650,
+        5736,
+        1776,
+        12859,
+        8197,
+        10241,
+        1069,
+        8602,
+        8230,
+        16613,
+        3182,
+        2371,
+        3080,
+        2212,
+        2295,
+        35
+      ]
+    },
+    {
+      "text": "\u00c9l\u00e8ve na\u00efve fa\u00e7ade \u2014 co\u00f6perate; Stra\u00dfe M\u00fcnchen",
+      "ids": [
+        2454,
+        16021,
+        13732,
+        7424,
+        523,
+        15238,
+        31,
+        1363,
+        21951,
+        20754
+      ]
+    },
+    {
+      "text": "The fee is $130.00 (about \u20ac120), 6\u20138 weeks!!",
+      "ids": [
+        1002,
+        6361,
+        1009,
+        8,
+        6504,
+        18,
+        3005,
+        12,
+        1061,
+        580,
+        11065,
+        1697,
+        13,
+        16,
+        26,
+        522,
+        28,
+        2139,
+        5,
+        5
+      ]
+    },
+    {
+      "text": "\u5317\u4eac passport office hours",
+      "ids": [
+        787,
+        761,
+        10857,
+        1441,
+        1852
+      ]
+    },
+    {
+      "text": "email: jane.doe@example.com https://www.ssa.gov/myaccount/",
+      "ids": [
+        9149,
+        30,
+        3868,
+        18,
+        15971,
+        36,
+        1747,
+        18,
+        3015,
+        14549,
+        30,
+        19,
+        19,
+        6429,
+        18,
+        5986,
+        1056,
+        18,
+        15556,
+        19,
+        1032,
+        5284,
+        2602,
+        14473,
+        19
+      ]
+    },
+    {
+      "text": "Supercalifragilisticexpialidocious antidisestablishmentarianism",
+      "ids": [
+        2570,
+        8157,
+        8931,
+        22743,
+        19900,
+        3588,
+        9075,
+        16473,
+        17857,
+        8891,
+        5292,
+        2429,
+        9284,
+        3356,
+        6813,
+        11974,
+        2677,
+        10774,
+        1969
+      ]
+    },
+    {
+      "text": "  leading   and trailing spaces  ",
+      "ids": [
+        1882,
+        1004,
+        11084,
+        6215
+      ]
+    },
+    {
+      "text": "",
+      "ids": []
+    },
+    {
+      "text": "[CLS] not special [SEP]",
+      "ids": [
+        2,
+        1031,
+        1574,
+        3
+      ]
+    },
+    {
+      "text": "emoji \ud83d\ude42 test",
+      "ids": [
+        6799,
+        22722,
+        1078,
+        1,
+        2236
+      ]
+    },
+    {
+      "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ok",
+      "ids": [
+        1,
+        6866
+      ]
+    },
+    {
+      "text": "Tab\tand\nnewline\u00a0nbsp\u200bzero",
+      "ids": [
+        18092,
+        1004,
+        1053,
+        3180,
+        56,
+        4897,
+        1366,
+        5270,
+        1086
+      ]
+    },
+    {
+      "text": "WHAT ABOUT UPPERCASE AND MiXeD CaSe?",
+      "ids": [
+        1060,
+        1061,
+        2361,
+        15780,
+        1004,
+        2820,
+        1558,
+        35
+      ]
+    }
+  ],
+  "samples": {
+    "ssn": {
+      "text": "My SSN is 452-78-1934 and I need to fix my tax return.",
+      "contentTokens": 19,
+      "windows": [
+        {
+          "tokens": 19,
+          "logit": 6.197017192840576,
+          "prob": 0.9979686417420909
+        }
+      ],
+      "maxProb": 0.9979686417420909
+    },
+    "fee": {
+      "text": "The passport renewal fee is $130 and processing takes 6 to 8 weeks.",
+      "contentTokens": 15,
+      "windows": [
+        {
+          "tokens": 15,
+          "logit": -6.266608715057373,
+          "prob": 0.0018950584976533222
+        }
+      ],
+      "maxProb": 0.0018950584976533222
+    },
+    "public-figure": {
+      "text": "When was Abraham Lincoln elected president?",
+      "contentTokens": 7,
+      "windows": [
+        {
+          "tokens": 7,
+          "logit": -3.8482348918914795,
+          "prob": 0.020872387066466786
+        }
+      ],
+      "maxProb": 0.020872387066466786
+    },
+    "agency-address": {
+      "text": "Is the IRS office at 1111 Constitution Ave NW, Washington, DC 20224 open on Saturdays?",
+      "contentTokens": 20,
+      "windows": [
+        {
+          "tokens": 20,
+          "logit": 6.216994762420654,
+          "prob": 0.9980087406614375
+        }
+      ],
+      "maxProb": 0.9980087406614375
+    },
+    "role-mailbox": {
+      "text": "Can I send my FOIA request to foia@irs.gov?",
+      "contentTokens": 15,
+      "windows": [
+        {
+          "tokens": 15,
+          "logit": -4.9481401443481445,
+          "prob": 0.007046588518756965
+        }
+      ],
+      "maxProb": 0.007046588518756965
+    },
+    "phone": {
+      "text": "Call me back at (415) 206-7781 about my claim.",
+      "contentTokens": 16,
+      "windows": [
+        {
+          "tokens": 16,
+          "logit": 5.981434345245361,
+          "prob": 0.9974811588994316
+        }
+      ],
+      "maxProb": 0.9974811588994316
+    },
+    "spanish-ssn": {
+      "text": "Mi n\u00famero de seguro social es 452-78-1934, \u00bfc\u00f3mo lo cambio?",
+      "contentTokens": 23,
+      "windows": [
+        {
+          "tokens": 23,
+          "logit": 6.090223789215088,
+          "prob": 0.9977402161914072
+        }
+      ],
+      "maxProb": 0.9977402161914072
+    },
+    "french-benign": {
+      "text": "Comment renouveler mon passeport am\u00e9ricain depuis la France ?",
+      "contentTokens": 16,
+      "windows": [
+        {
+          "tokens": 16,
+          "logit": -5.802758693695068,
+          "prob": 0.0030101259441682104
+        }
+      ],
+      "maxProb": 0.0030101259441682104
+    },
+    "long": {
+      "text": "I am trying to understand how the passport renewal process works and which form I should use if my previous passport was issued more than fifteen years ago. I am trying to understand how the passport renewal process works and which form I should use if my previous passport was issued more than fifteen years ago. I am trying to understand how the passport renewal process works and which form I should use if my previous passport was issued more than fifteen years ago. I am trying to understand how the passport renewal process works and which form I should use if my previous passport was issued more than fifteen years ago. I am trying to understand how the passport renewal process works and which form I should use if my previous passport was issued more than fifteen years ago. I am trying to understand how the passport renewal process works and which form I should use if my previous passport was issued more than fifteen years ago. I am trying to understand how the passport renewal process works and which form I should use if my previous passport was issued more than fifteen years ago. I am trying to understand how the passport renewal process works and which form I should use if my previous passport was issued more than fifteen years ago. I am trying to understand how the passport renewal process works and which form I should use if my previous passport was issued more than fifteen years ago. I am trying to understand how the passport renewal process works and which form I should use if my previous passport was issued more than fifteen years ago. I am trying to understand how the passport renewal process works and which form I should use if my previous passport was issued more than fifteen years ago. I am trying to understand how the passport renewal process works and which form I should use if my previous passport was issued more than fifteen years ago. I am trying to understand how the passport renewal process works and which form I should use if my previous passport was issued more than fifteen years ago. I am trying to understand how the passport renewal process works and which form I should use if my previous passport was issued more than fifteen years ago. Also, my Medicare number is 3CX7-MK2-PW45 if that helps.",
+      "contentTokens": 427,
+      "windows": [
+        {
+          "tokens": 382,
+          "logit": -6.226197242736816,
+          "prob": 0.001973054860634087
+        },
+        {
+          "tokens": 141,
+          "logit": 6.2018327713012695,
+          "prob": 0.9979783806632598
+        }
+      ],
+      "maxProb": 0.9979783806632598
+    }
+  }
+}
