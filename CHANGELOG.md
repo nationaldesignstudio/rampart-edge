@@ -8,11 +8,11 @@ isolation) that is inlined in the package, so a host downloads two files instead
 
 | | 2.0.5 | 3.0.0 |
 |---|---:|---:|
-| Package bundle `dist/index.js` (Brotli) | 57.5 KB | 73.1 KB (includes the 27,260-byte engine wasm, inlined) [MEASURED] |
-| Engine (Brotli) | onnxruntime-web 1.30, trimmed: 1,445 KB | 8.6 KB, inside the bundle [MEASURED] |
+| Package bundle `dist/index.js` (Brotli) | 57.5 KB | 74.5 KB (includes the 29,978-byte engine wasm, inlined) [MEASURED] |
+| Engine (Brotli) | onnxruntime-web 1.30, trimmed: 1,445 KB | 9.2 KB, inside the bundle [MEASURED] |
 | Weights (Brotli) | `onnx/model_q4.onnx` 1,172 KB | `model.rmpw` 1,165 KB [MEASURED] |
 | Vocabulary (Brotli) | 70.4 KB | 70.4 KB [MEASURED] |
-| Complete download (Brotli) | **2,746 KB** | **1,309 KB** [MEASURED] |
+| Complete download (Brotli) | **2,746 KB** | **1,310 KB** [MEASURED] |
 
 Sizes are `zlib.brotliCompressSync` at quality 11 of the built files on this branch and of the 2.0.5 build.
 
@@ -27,11 +27,11 @@ COOP/COEP, `model.rmpw` fetched over HTTP, p50 of 20 full `gate.check` calls) [M
 
 | | Chromium 153 | WebKit 26.6 |
 |---|---:|---:|
-| `createGate` (fetch 1.5 MB from localhost + verify pins + engine load) | 68 ms | 74 ms |
-| engine load (`GateModel.engine.loadMs`) | 23 ms | 14 ms |
-| first `check` | 10 ms | 13 ms |
-| p50 `check`, 32 / 128 tokens, main thread | 6.3 / 25.9 ms | 10 / 41 ms |
-| p50 `check`, 32 / 128 tokens, through the Worker | 8.1 / 31.3 ms | 10 / 43 ms |
+| `createGate` (fetch 1.5 MB from localhost + verify pins + engine load) | 78 ms | 84 ms |
+| engine load (`GateModel.engine.loadMs`, incl. kernel calibration) | 38 ms | 38 ms |
+| first `check` | 11 ms | 9 ms |
+| p50 `check`, 32 / 128 tokens, main thread | 7.1 / 28.5 ms | 7.0 / 29.0 ms |
+| p50 `check`, 32 / 128 tokens, through the Worker | 6.3 / 25.6 ms | 7.0 / 29.0 ms |
 | wasm memory after load | 194 pages (12.1 MB) | 194 pages |
 | `crossOriginIsolated` / `SharedArrayBuffer` | false / absent | false / absent |
 
@@ -52,8 +52,11 @@ COOP/COEP, `model.rmpw` fetched over HTTP, p50 of 20 full `gate.check` calls) [M
   `src/runtime.ts`, `runtime/ort-wasm-simd-threaded.{mjs,wasm}`, `tools/ort-engine/`. `model/onnx/model_q4.onnx`
   stays in the repository as the parity reference (`model/onnx/README.md`) but is not in the npm package; neither are
   `tokenizer.json`, `tokenizer_config.json` and `special_tokens_map.json` (still in the repository and on Hugging Face).
-- **Added**: `createEngine`, `EngineError`, `parseWeightHeader`, `engineWasmBytes`, `ENGINE_WASM_BASE64`, types
-  `GateEngine`, `EngineOutput`, `WeightHeader`; `fetchGateModel(options)`; `createGateModelFromWeights({ weights, vocab,
+- **Added**: `createEngine(wasm, weights, { kernel?: "auto" | "unrolled" | "compact" })`, `EngineError`,
+  `parseWeightHeader`, `engineWasmBytes`, `ENGINE_WASM_BASE64`, types `GateEngine` (`run`, `loadMs`, `memoryPages`,
+  `kernel`), `EngineOutput`, `EngineOptions`, `EngineKernel`, `WeightHeader`. The `kernel` option picks the GEMM
+  microkernel; both give bit-identical output and the default `"auto"` times each once at load (the gate always uses
+  the default); `fetchGateModel(options)`; `createGateModelFromWeights({ weights, vocab,
   wasm?, config? })`; `fromEngineError`; `MODEL_ENGINE` (`config.engine`: `{ format: "rmpw", version: 1, wasm_sha256,
   wasm_bytes }`); `GateModel.engine` (`loadMs`, `memoryPages`).
 - **`createGateModel(engine, vocab, options?)`** takes a `GateEngine` instead of `(ort, modelBytes, vocab, options)`

@@ -1,6 +1,6 @@
 # Rampart Edge
 
-Rampart Edge is a client-side PII gate for AI chat. Before a message leaves the browser it is read twice: by deterministic validators (SSNs, cards, routing numbers, phones, emails, national ids) and by a 1.3 MB 4-bit model running on a 27 KB WebAssembly engine inlined in the package. If either says BLOCK, the message is not sent. The gate answers **BLOCK** or **ALLOW** plus the model's probability, and the same model call marks the PII spans, so the redactor needs no second model.
+Rampart Edge is a client-side PII gate for AI chat. Before a message leaves the browser it is read twice: by deterministic validators (SSNs, cards, routing numbers, phones, emails, national ids) and by a 1.3 MB 4-bit model running on a 30 KB WebAssembly engine inlined in the package. If either says BLOCK, the message is not sent. The gate answers **BLOCK** or **ALLOW** plus the model's probability, and the same model call marks the PII spans, so the redactor needs no second model.
 
 Built by National Design Studio as a new, smaller version of [Rampart](https://github.com/nationaldesignstudio/rampart), tuned for chat. Everything runs on the user's device; no server is in the loop.
 
@@ -52,19 +52,19 @@ The worker builds its own engine from the inlined wasm; no SharedArrayBuffer, CO
 
 | | 3.0 (this engine) | 2.x (onnxruntime-web 1.30, trimmed) |
 |---|---:|---:|
-| Engine, Brotli | 8.6 KB, inlined in `dist/index.js` [MEASURED] | 1,445 KB (`runtime/`) [MEASURED] |
+| Engine, Brotli | 9.2 KB, inlined in `dist/index.js` [MEASURED] | 1,445 KB (`runtime/`) [MEASURED] |
 | `model.rmpw` / `model_q4.onnx`, Brotli | 1,165 KB [MEASURED] | 1,172 KB [MEASURED] |
 | `vocab.txt`, Brotli | 70 KB [MEASURED] | 70 KB [MEASURED] |
-| Complete download, Brotli (`dist/index.js` + weights + vocab) | **1,309 KB** [MEASURED] | **2,746 KB** [MEASURED] |
+| Complete download, Brotli (`dist/index.js` + weights + vocab) | **1,310 KB** [MEASURED] | **2,746 KB** [MEASURED] |
 | Engine load (compile + expand weights) | 10 ms [MEASURED] | 325 ms [MEASURED] |
 | p50 `check` at 32 / 128 tokens, one thread | 8.6 / 39 ms [MEASURED] | 18 / 50 ms [MEASURED] |
 | Wasm memory after load | 194 pages (12.1 MB) [MEASURED] | — |
 
-Sizes are Brotli quality 11 of the built files. Load and p50 are the bake-off that approved the engine: Playwright Chromium on one Linux x86 VM, the fp32 engine against onnxruntime-web 1.30 on `model_q4.onnx`, forward pass only. The shipped build's own smoke (`bun run smoke:browser`: `dist/index.js` in a plain page and in a Worker, no COOP/COEP, `model.rmpw` over HTTP, p50 of 20 full `gate.check` calls including tokenizer and validators): Chromium 153 — engine load 23 ms, first `check` 10 ms, p50 6.3 / 25.9 ms at 32 / 128 tokens on the page and 8.1 / 31.3 ms through the Worker; WebKit 26.6 — load 14 ms, first `check` 13 ms, p50 10 / 41 ms on the page and 10 / 43 ms through the Worker; 194 wasm pages in both, `crossOriginIsolated` false, identical decisions on both threads [MEASURED].
+Sizes are Brotli quality 11 of the built files. Load and p50 are the bake-off that approved the engine: Playwright Chromium on one Linux x86 VM, the fp32 engine against onnxruntime-web 1.30 on `model_q4.onnx`, forward pass only. The shipped build's own smoke (`bun run smoke:browser`: `dist/index.js` in a plain page and in a Worker, no COOP/COEP, `model.rmpw` over HTTP, p50 of 20 full `gate.check` calls including tokenizer and validators): Chromium 153 — engine load 38 ms (incl. kernel calibration), first `check` 11 ms, p50 7.1 / 28.5 ms at 32 / 128 tokens on the page and 6.3 / 25.6 ms through the Worker; WebKit 26.6 — load 38 ms, first `check` 9 ms, p50 7.0 / 29.0 ms on the page and 7.0 / 29.0 ms through the Worker; 194 wasm pages in both, `crossOriginIsolated` false, identical decisions on both threads [MEASURED].
 
 Parity: the engine is checked in CI against the archived output of onnxruntime-web 1.30 (WASM, one thread, Chromium) on `model_q4.onnx`, the runtime 2.x shipped: max |Δ gate logit| 1.9e-6 on the 12 reference texts, 2.1e-5 on 1,000 dev rows, 3.3e-5 on 354 near-threshold dev rows; identical token argmax on 105,854 tokens; 0 decision flips at the shipped threshold [MEASURED, `__tests__/parity.test.ts`]. Both compute fp32 on the same dequantized weights; nothing was retrained.
 
-Browser support is WebAssembly SIMD128: Chrome 91+, Firefox 89+, Safari 16.4+ [DOC]. If `createGate` throws `GateModelError` (`stage: "runtime"` when WebAssembly SIMD is unavailable, `"download"`, `"integrity"`, `"session"`, `"graph"` or `"inference"`), fall back to `createValidatorGate()`.
+The engine has two GEMM microkernels with bit-identical output (`"unrolled"`, fastest on V8; `"compact"`, fastest on JavaScriptCore); `createEngine(wasm, weights, { kernel })` selects one, and the default `"auto"`, which the gate uses, times both at load and keeps the faster (`GateModel.engine.kernel`). Browser support is WebAssembly SIMD128: Chrome 91+, Firefox 89+, Safari 16.4+ [DOC]. If `createGate` throws `GateModelError` (`stage: "runtime"` when WebAssembly SIMD is unavailable, `"download"`, `"integrity"`, `"session"`, `"graph"` or `"inference"`), fall back to `createValidatorGate()`.
 
 ## Allowlist
 

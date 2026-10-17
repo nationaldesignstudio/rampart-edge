@@ -61,6 +61,7 @@ describe("gate model (RMPW weights on the inlined wasm engine)", () => {
       run: (ids) => ({ gateLogit: 0, tokenLogits: new Float32Array(ids.length * 5) }),
       memoryPages: 1,
       loadMs: 1,
+      kernel: "unrolled",
     };
     const error = (() => {
       try {

@@ -40,6 +40,7 @@ function replayEngine(labels = L): GateEngine {
     },
     memoryPages: 1,
     loadMs: 0,
+    kernel: "unrolled",
   };
 }
 

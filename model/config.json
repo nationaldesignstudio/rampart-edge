@@ -54,8 +54,8 @@
   "engine": {
     "format": "rmpw",
     "version": 1,
-    "wasm_sha256": "f5047aeeb78a0156de05059dd13425057684fe6af5217f5a225c6810b0008b41",
-    "wasm_bytes": 27260
+    "wasm_sha256": "18e9d0c9ecc9b5458658c5412848652fce67a05f136f8b46e239765a8ad3aa71",
+    "wasm_bytes": 29978
   },
   "files": {
     "model.rmpw": {

@@ -3,7 +3,7 @@
  *
  * Client-side PII gate for AI chat. Before a message leaves the browser it is checked twice: by
  * deterministic validators (SSNs, cards, routing numbers, phones, emails, ...) and by a 1.3 MB 4-bit
- * model run by a 27 KB wasm engine inlined in this package. Either one saying BLOCK blocks the message.
+ * model run by a 30 KB wasm engine inlined in this package. Either one saying BLOCK blocks the message.
  * The same model call marks the PII spans (`decision.spans`); `/redactor` replaces them with [REDACTED].
  */
 
@@ -14,6 +14,8 @@ export {
   ENGINE_WASM_BASE64,
   engineWasmBytes,
   parseWeightHeader,
+  type EngineKernel,
+  type EngineOptions,
   type EngineOutput,
   type GateEngine,
   type WeightHeader,
