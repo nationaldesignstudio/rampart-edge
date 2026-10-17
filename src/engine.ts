@@ -19,7 +19,18 @@ export type GateEngine = {
   /** Synchronous forward. `1 <= n <= 384`; throws `EngineError("range")` or `EngineError("numeric")`. */
   run(inputIds: ArrayLike<number>, attentionMask?: ArrayLike<number>): EngineOutput;
   readonly memoryPages: number;
+  /** Compile + instantiate + weight validation + dequantisation (+ kernel calibration when `kernel: "auto"`). */
   readonly loadMs: number;
+  /** GEMM microkernel in use. Both variants produce bit-identical output; only speed differs. */
+  readonly kernel: EngineKernel;
+};
+
+/** `"unrolled"` (K loop unrolled by 4) is fastest on V8; `"compact"` is fastest on JavaScriptCore (Safari). */
+export type EngineKernel = "unrolled" | "compact";
+
+export type EngineOptions = {
+  /** Default `"auto"`: time a short synthetic forward with each kernel at load and keep the faster one. */
+  readonly kernel?: EngineKernel | "auto";
 };
 
 export type EngineErrorStage = "wasm" | "format" | "integrity" | "init" | "range" | "numeric";
@@ -88,8 +99,11 @@ type EngineExports = {
   mask_ptr(): number;
   tok_ptr(): number;
   forward(n: number): number;
+  set_kernel(kernel: number): number;
   version(): number;
 };
+
+const KERNEL_CODE: Readonly<Record<EngineKernel, number>> = { unrolled: 0, compact: 1 };
 
 const now = (): number => (typeof performance !== "undefined" ? performance.now() : Date.now());
 
@@ -167,7 +181,7 @@ function instantiate(module: WebAssembly.Module): EngineExports {
     throw new EngineError("wasm", `engine wasm failed to instantiate: ${e instanceof Error ? e.message : String(e)}`);
   }
   const ex = instance.exports as Partial<Record<keyof EngineExports, unknown>>;
-  const required: (keyof EngineExports)[] = ["memory", "arena_alloc", "init", "ids_ptr", "mask_ptr", "tok_ptr", "forward", "version"];
+  const required: (keyof EngineExports)[] = ["memory", "arena_alloc", "init", "ids_ptr", "mask_ptr", "tok_ptr", "forward", "set_kernel", "version"];
   for (const name of required) {
     const ok = name === "memory" ? ex[name] instanceof WebAssembly.Memory : typeof ex[name] === "function";
     if (!ok) throw new EngineError("wasm", `engine wasm is missing export ${name}`);
@@ -179,7 +193,11 @@ function instantiate(module: WebAssembly.Module): EngineExports {
  * Compile (or reuse a precompiled module), instantiate, validate the weight header, copy the weights into the
  * engine arena and run the wasm-side validation (every header field, tensor table, payload sha256).
  */
-export async function createEngine(wasm: BufferSource | WebAssembly.Module, weights: Uint8Array): Promise<GateEngine> {
+export async function createEngine(
+  wasm: BufferSource | WebAssembly.Module,
+  weights: Uint8Array,
+  options: EngineOptions = {},
+): Promise<GateEngine> {
   const t0 = now();
   parseWeightHeader(weights);
   const module = await compile(wasm);
@@ -198,7 +216,6 @@ export async function createEngine(wasm: BufferSource | WebAssembly.Module, weig
   const maskPtr = ex.mask_ptr();
   const tokPtr = ex.tok_ptr();
   if (idsPtr === 0 || maskPtr === 0 || tokPtr === 0) throw new EngineError("init", "engine buffers unavailable");
-  const loadMs = now() - t0;
   const vocab = ENGINE_SHAPE.vocab;
 
   const run = (inputIds: ArrayLike<number>, attentionMask?: ArrayLike<number>): EngineOutput => {
@@ -226,11 +243,35 @@ export async function createEngine(wasm: BufferSource | WebAssembly.Module, weig
     return { gateLogit, tokenLogits };
   };
 
+  const selectKernel = (kernel: EngineKernel): void => {
+    if (ex.set_kernel(KERNEL_CODE[kernel]) !== 0) throw new EngineError("init", `engine rejected kernel ${kernel}`);
+  };
+  const kernel = options.kernel === undefined || options.kernel === "auto" ? calibrateKernel(run, selectKernel) : options.kernel;
+  selectKernel(kernel);
+  const loadMs = now() - t0;
+
   return {
     run,
     loadMs,
+    kernel,
     get memoryPages(): number {
       return ex.memory.buffer.byteLength / 65536;
     },
   };
+}
+
+const CALIBRATION_IDS: readonly number[] = Array.from({ length: 48 }, (_, i) => (i === 0 ? 2 : i === 47 ? 3 : 1000 + ((i * 7919) % 20000)));
+
+/** Best-of-3 timing of a 48-token forward per kernel; ties go to `"unrolled"`. Output does not depend on the choice. */
+function calibrateKernel(run: GateEngine["run"], select: (kernel: EngineKernel) => void): EngineKernel {
+  const best: Record<EngineKernel, number> = { unrolled: Infinity, compact: Infinity };
+  for (let round = 0; round < 3; round++) {
+    for (const kernel of ["unrolled", "compact"] as const) {
+      select(kernel);
+      const t = now();
+      run(CALIBRATION_IDS);
+      best[kernel] = Math.min(best[kernel], now() - t);
+    }
+  }
+  return best.compact < best.unrolled ? "compact" : "unrolled";
 }

@@ -148,6 +148,17 @@ pub extern "C" fn forward(n: usize) -> f32 {
     }
 }
 
+/// Select the GEMM microkernel: 0 = unrolled (default), 1 = compact. Returns 0 on success, 1 for an
+/// unknown value (the setting is left unchanged). Output is bit-identical for both kernels.
+#[no_mangle]
+pub extern "C" fn set_kernel(kernel: u32) -> u32 {
+    if kernel > kernels::KERNEL_COMPACT {
+        return 1;
+    }
+    kernels::KERNEL.store(kernel, core::sync::atomic::Ordering::Relaxed);
+    0
+}
+
 #[no_mangle]
 pub extern "C" fn version() -> u32 {
     VERSION

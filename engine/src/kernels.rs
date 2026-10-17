@@ -5,6 +5,14 @@
 //! (`p[(g*k + kk)*8 + c] = W[8g + c][kk]`), and a bias of `n` floats. `n % 8 == 0` is required.
 
 use crate::simd::V4;
+use core::sync::atomic::{AtomicU32, Ordering};
+
+/// GEMM microkernel variant: `KERNEL_UNROLLED` (K unrolled by 4, best on V8/SpiderMonkey) or
+/// `KERNEL_COMPACT` (plain K loop, best on JavaScriptCore). Both compute every output element with the same
+/// operation sequence, so the choice only affects speed. Set through the `set_kernel` export.
+pub static KERNEL: AtomicU32 = AtomicU32::new(KERNEL_UNROLLED);
+pub const KERNEL_UNROLLED: u32 = 0;
+pub const KERNEL_COMPACT: u32 = 1;
 
 pub const GROUP: usize = 8;
 
@@ -16,13 +24,15 @@ pub struct Packed {
     pub k: usize,
 }
 
-/// `RB` rows x 8 columns, K unrolled by 4, bias folded into the accumulator init, optional residual add.
+/// `RB` rows x 8 columns, bias folded into the accumulator init, optional residual add. `U` unrolls K by 4
+/// (faster on V8, slower on JavaScriptCore); both variants perform the identical sequence of operations per
+/// output element, so results are bit-identical.
 ///
 /// # Safety
 /// `a` must hold `RB` rows of `k` floats (stride `lda`), `p` a `k x 8` panel, `bias` 8 floats, `c` `RB` rows
 /// of 8 floats (stride `ldc`), and `res` (if non-null) `RB` rows of 8 floats (stride `ldr`).
 #[inline(always)]
-unsafe fn micro<const RB: usize>(
+unsafe fn micro<const RB: usize, const U: bool>(
     a: *const f32,
     lda: usize,
     p: *const f32,
@@ -36,7 +46,7 @@ unsafe fn micro<const RB: usize>(
     let mut acc = [[V4::load(bias), V4::load(bias.add(4))]; RB];
     let mut pk = p;
     let mut kk = 0usize;
-    while kk + 4 <= k {
+    while U && kk + 4 <= k {
         let mut u = 0;
         while u < 4 {
             let w0 = V4::load(pk.add(u * 8));
@@ -103,6 +113,24 @@ pub unsafe fn gemm(
     ldc: usize,
     m: usize,
 ) {
+    if KERNEL.load(Ordering::Relaxed) == KERNEL_COMPACT {
+        gemm_impl::<false>(a, lda, w, res, ldr, c, ldc, m)
+    } else {
+        gemm_impl::<true>(a, lda, w, res, ldr, c, ldc, m)
+    }
+}
+
+#[inline(always)]
+unsafe fn gemm_impl<const U: bool>(
+    a: *const f32,
+    lda: usize,
+    w: &Packed,
+    res: *const f32,
+    ldr: usize,
+    c: *mut f32,
+    ldc: usize,
+    m: usize,
+) {
     let k = w.k;
     let groups = w.n / GROUP;
     // Row blocks outer so the RB x k slab of `a` stays in L1 while the packed weights stream from L2.
@@ -126,10 +154,10 @@ pub unsafe fn gemm(
             let cg = ci.add(g * GROUP);
             let rg = row_res(ri, g * GROUP);
             match rb {
-                6 => micro::<6>(ai, lda, p, bias, rg, ldr, cg, ldc, k),
-                4 => micro::<4>(ai, lda, p, bias, rg, ldr, cg, ldc, k),
-                2 => micro::<2>(ai, lda, p, bias, rg, ldr, cg, ldc, k),
-                _ => micro::<1>(ai, lda, p, bias, rg, ldr, cg, ldc, k),
+                6 => micro::<6, U>(ai, lda, p, bias, rg, ldr, cg, ldc, k),
+                4 => micro::<4, U>(ai, lda, p, bias, rg, ldr, cg, ldc, k),
+                2 => micro::<2, U>(ai, lda, p, bias, rg, ldr, cg, ldc, k),
+                _ => micro::<1, U>(ai, lda, p, bias, rg, ldr, cg, ldc, k),
             }
         }
         i += rb;
@@ -360,6 +388,57 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    #[test]
+    fn gemm_kernels_are_bit_identical() {
+        let mut seed = 11u64;
+        for &(m, n, k) in &[
+            (1usize, 8usize, 3usize),
+            (6, 16, 9),
+            (13, 24, 70),
+            (31, 8, 1024),
+        ] {
+            let a: Vec<f32> = (0..m * k).map(|_| lcg(&mut seed)).collect();
+            let w: Vec<f32> = (0..n * k).map(|_| lcg(&mut seed)).collect();
+            let bias: Vec<f32> = (0..n).map(|_| lcg(&mut seed)).collect();
+            let mut packed = vec![0f32; n * k];
+            unsafe { pack_rows(w.as_ptr(), n, k, packed.as_mut_ptr()) };
+            let pk = Packed {
+                p: packed.as_ptr(),
+                bias: bias.as_ptr(),
+                n,
+                k,
+            };
+            let mut c0 = vec![0f32; m * n];
+            let mut c1 = vec![0f32; m * n];
+            unsafe {
+                gemm_impl::<true>(
+                    a.as_ptr(),
+                    k,
+                    &pk,
+                    core::ptr::null(),
+                    0,
+                    c0.as_mut_ptr(),
+                    n,
+                    m,
+                );
+                gemm_impl::<false>(
+                    a.as_ptr(),
+                    k,
+                    &pk,
+                    core::ptr::null(),
+                    0,
+                    c1.as_mut_ptr(),
+                    n,
+                    m,
+                );
+            }
+            let b0: Vec<u32> = c0.iter().map(|v| v.to_bits()).collect();
+            let b1: Vec<u32> = c1.iter().map(|v| v.to_bits()).collect();
+            assert_eq!(b0, b1, "m={m} n={n} k={k}");
+            assert_eq!(super::KERNEL.load(Ordering::Relaxed), KERNEL_UNROLLED);
         }
     }
 

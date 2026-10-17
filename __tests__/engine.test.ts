@@ -47,7 +47,7 @@ describe("engine artifacts", () => {
     const mod = new WebAssembly.Module(wasm);
     expect(WebAssembly.Module.imports(mod)).toEqual([]);
     const exports = WebAssembly.Module.exports(mod).map((e) => e.name).sort();
-    expect(exports).toEqual(["arena_alloc", "forward", "ids_ptr", "init", "mask_ptr", "memory", "tok_ptr", "version"]);
+    expect(exports).toEqual(["arena_alloc", "forward", "ids_ptr", "init", "mask_ptr", "memory", "set_kernel", "tok_ptr", "version"]);
   });
 
   it("model.rmpw is the pinned golden file", () => {
@@ -98,6 +98,23 @@ describe("createEngine", () => {
     const e2 = await createEngine(await WebAssembly.compile(wasm), weights);
     const ids = [2, 1032, 1176, 1009, 3];
     expect(e2.run(ids).gateLogit).toBe(e1.run(ids).gateLogit);
+  });
+
+  it("both GEMM kernels produce bit-identical output; auto picks one of them", async () => {
+    const auto = await engine();
+    expect(["unrolled", "compact"]).toContain(auto.kernel);
+    const unrolled = await createEngine(wasm, weights, { kernel: "unrolled" });
+    const compact = await createEngine(wasm, weights, { kernel: "compact" });
+    expect(unrolled.kernel).toBe("unrolled");
+    expect(compact.kernel).toBe("compact");
+    for (const s of Object.values(reference.samples)) {
+      for (const w of s.windows) {
+        const a = unrolled.run(w.ids);
+        const b = compact.run(w.ids);
+        expect(b.gateLogit).toBe(a.gateLogit);
+        expect(Array.from(b.tokenLogits)).toEqual(Array.from(a.tokenLogits));
+      }
+    }
   });
 
   it("rejects a flipped payload byte with EngineError(integrity)", async () => {
