@@ -105,71 +105,34 @@ pub unsafe fn gemm(
 ) {
     let k = w.k;
     let groups = w.n / GROUP;
-    for g in 0..groups {
-        let p = w.p.add(g * k * GROUP);
-        let bias = w.bias.add(g * GROUP);
-        let cg = c.add(g * GROUP);
-        let rg = if res.is_null() {
-            res
+    // Row blocks outer so the RB x k slab of `a` stays in L1 while the packed weights stream from L2.
+    let mut i = 0usize;
+    while i < m {
+        let rb = if m - i >= 6 {
+            6
+        } else if m - i >= 4 {
+            4
+        } else if m - i >= 2 {
+            2
         } else {
-            res.add(g * GROUP)
+            1
         };
-        let mut i = 0usize;
-        while m - i >= 6 {
-            micro::<6>(
-                a.add(i * lda),
-                lda,
-                p,
-                bias,
-                row_res(rg, i * ldr),
-                ldr,
-                cg.add(i * ldc),
-                ldc,
-                k,
-            );
-            i += 6;
+        let ai = a.add(i * lda);
+        let ci = c.add(i * ldc);
+        let ri = row_res(res, i * ldr);
+        for g in 0..groups {
+            let p = w.p.add(g * k * GROUP);
+            let bias = w.bias.add(g * GROUP);
+            let cg = ci.add(g * GROUP);
+            let rg = row_res(ri, g * GROUP);
+            match rb {
+                6 => micro::<6>(ai, lda, p, bias, rg, ldr, cg, ldc, k),
+                4 => micro::<4>(ai, lda, p, bias, rg, ldr, cg, ldc, k),
+                2 => micro::<2>(ai, lda, p, bias, rg, ldr, cg, ldc, k),
+                _ => micro::<1>(ai, lda, p, bias, rg, ldr, cg, ldc, k),
+            }
         }
-        if m - i >= 4 {
-            micro::<4>(
-                a.add(i * lda),
-                lda,
-                p,
-                bias,
-                row_res(rg, i * ldr),
-                ldr,
-                cg.add(i * ldc),
-                ldc,
-                k,
-            );
-            i += 4;
-        }
-        if m - i >= 2 {
-            micro::<2>(
-                a.add(i * lda),
-                lda,
-                p,
-                bias,
-                row_res(rg, i * ldr),
-                ldr,
-                cg.add(i * ldc),
-                ldc,
-                k,
-            );
-            i += 2;
-        }
-        if m - i >= 1 {
-            micro::<1>(
-                a.add(i * lda),
-                lda,
-                p,
-                bias,
-                row_res(rg, i * ldr),
-                ldr,
-                cg.add(i * ldc),
-                ldc,
-                k,
-            );
-        }
+        i += rb;
     }
 }
 
@@ -206,16 +169,32 @@ pub fn exp4(x: V4) -> V4 {
 /// `erf(x)` lane-wise, Abramowitz-Stegun 7.1.26 (max abs err ~1.5e-7).
 #[inline(always)]
 pub fn erf4(x: V4) -> V4 {
+    // Odd rational minimax fit erf(x) = x * P(x^2) / Q(x^2) on [0, 3.92] (|err| < 4e-7); |x| is clamped to
+    // 3.92 first, where erf is 1 to within 3e-8, so no overflow or extra clamp is needed.
     let sign = x.sign_bits();
-    let ax = x.abs();
-    let one = V4::splat(1.0);
-    let t = one.div(one.add(V4::splat(0.327_591_1).mul(ax)));
-    let mut p = V4::splat(1.061_405_4);
-    for c in [-1.453_152, 1.421_413_7, -0.284_496_74, 0.254_829_6] {
+    let ax = x.abs().min(V4::splat(3.92));
+    let t = ax.mul(ax);
+    let mut p = V4::splat(1.952_254_8e-6);
+    for c in [
+        3.138_527e-4,
+        4.754_290_6e-3,
+        5.572_665_6e-2,
+        0.212_567_95,
+        1.128_377_6,
+    ] {
         p = p.mul(t).add(V4::splat(c));
     }
-    let y = one.sub(p.mul(t).mul(exp4(ax.mul(ax).neg())));
-    y.or(sign)
+    let mut q = V4::splat(3.862_816_4e-5);
+    for c in [
+        1.416_994_4e-3,
+        1.690_711_4e-2,
+        0.123_326_93,
+        0.521_703_23,
+        1.0,
+    ] {
+        q = q.mul(t).add(V4::splat(c));
+    }
+    ax.mul(p).div(q).or(sign)
 }
 
 /// In-place erf-GELU over `n` floats (`n % 4 == 0`).

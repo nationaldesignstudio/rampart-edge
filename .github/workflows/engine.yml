@@ -1,0 +1,52 @@
+name: engine
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "engine/**"
+      - "runtime/rampart-engine.wasm"
+      - "src/engine.ts"
+      - "src/engine-wasm.ts"
+      - "scripts/build-engine.ts"
+      - "__tests__/engine.test.ts"
+      - "__tests__/fixtures/engine-reference.json"
+      - "model/model.rmpw*"
+      - ".github/workflows/engine.yml"
+  pull_request:
+
+jobs:
+  engine:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: engine
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: false
+      - name: Install pinned Rust toolchain (rust-toolchain.toml)
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup target add wasm32-unknown-unknown
+          rustup component add rustfmt clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: engine
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
+      - name: cargo clippy -D warnings (wasm, all features)
+        run: cargo clippy --release --target wasm32-unknown-unknown --all-features -- -D warnings
+      - name: cargo clippy -D warnings (host, tests)
+        run: cargo clippy --release --tests -- -D warnings
+      - name: cargo test (host-target unit tests)
+        run: cargo test --release
+      - uses: oven-sh/setup-bun@v2
+      - name: Reproducible build, byte-identical to runtime/rampart-engine.wasm, size budget <= 48 KB
+        working-directory: .
+        run: bun scripts/build-engine.ts --check
+      - name: Engine vitest (wasm + model.rmpw + browser ORT reference fixture)
+        working-directory: .
+        run: |
+          bun install --frozen-lockfile
+          bun x vitest run __tests__/engine.test.ts
