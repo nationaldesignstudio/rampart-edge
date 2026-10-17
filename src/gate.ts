@@ -1,26 +1,27 @@
 import config from "../model/config.json";
 import { compileAllowlist, type AllowlistOptions, type CompiledAllowlist } from "./allowlist.js";
-import { createGateModel, fetchPinned, GateModelError, type GateModel, type OrtLike } from "./model.js";
+import { createGateModelFromWeights, fetchPinned, type GateModel, type PinnedFile } from "./model.js";
 import { assertThreshold, decide, type GateDecision } from "./scoring.js";
 import { decodeSpans, deterministicUnion } from "./spans.js";
 import { gate as validatorGate, type GateResult } from "./validators/index.js";
-import { applyBundledRuntime, type OrtWasmEnv } from "./runtime.js";
 
 export const MODEL_ID = config.model_id;
-export const MODEL_FILES = config.files;
+/** Byte count and SHA-256 of the two files `createGate` downloads. */
+export const MODEL_FILES: Readonly<Record<"model.rmpw" | "vocab.txt", PinnedFile>> = config.files;
+/** The inlined engine: weight format, and the pin of the wasm `engineWasmBytes()` decodes to. */
+export const MODEL_ENGINE = config.engine;
 /** Where `createGate` fetches the model from unless `modelBaseUrl` points at your own origin. */
 export const DEFAULT_MODEL_BASE_URL = `https://huggingface.co/${config.model_id}/resolve/main/`;
 
 export interface GateOptions {
-  /** An `onnxruntime-web` (or `onnxruntime-node`) module. Defaults to `import("onnxruntime-web")`. */
-  readonly ort?: OrtLike;
-  /** Directory that serves `onnx/model_q4.onnx` and `vocab.txt`. Self-host it for production. */
+  /** Directory that serves `model.rmpw` and `vocab.txt`. Self-host it for production. */
   readonly modelBaseUrl?: string | URL;
+  /** The engine wasm, when you serve it yourself instead of using the copy inlined in this package. */
+  readonly engineWasm?: BufferSource | WebAssembly.Module;
   /** BLOCK when the model probability is at least this. Defaults to the published operating point. */
   readonly threshold?: number;
   /** Names, phone numbers and addresses that may pass. Adds to the built-in lists unless `builtIn: false`. */
   readonly allowlist?: AllowlistOptions;
-  readonly executionProviders?: readonly string[];
   readonly signal?: AbortSignal;
 }
 
@@ -65,39 +66,18 @@ export function createValidatorGate(threshold?: number, allowlist?: AllowlistOpt
   return new Gate(null, threshold, allowlist);
 }
 
-export async function defaultRuntime(): Promise<OrtLike> {
-  let loaded: unknown;
-  try {
-    loaded = await import("onnxruntime-web");
-  } catch (error) {
-    throw new GateModelError("runtime", "onnxruntime-web is not installed; pass `ort` or add the peer dependency", {
-      cause: error,
-    });
-  }
-  const ort = loaded as Partial<OrtLike> & {
-    env?: OrtWasmEnv & { wasm?: { numThreads?: number; proxy?: boolean } };
-  };
-  if (!ort.InferenceSession || !ort.Tensor) {
-    throw new GateModelError("runtime", "onnxruntime-web did not export InferenceSession and Tensor");
-  }
-  applyBundledRuntime(ort.env);
-  if (ort.env?.wasm) {
-    ort.env.wasm.numThreads = 1;
-    ort.env.wasm.proxy = false;
-  }
-  return ort as OrtLike;
+/** Downloads and verifies `model.rmpw` and `vocab.txt` under `modelBaseUrl`, then builds the engine and model. */
+export async function fetchGateModel(options: Pick<GateOptions, "modelBaseUrl" | "engineWasm" | "signal"> = {}): Promise<GateModel> {
+  const base = new URL(options.modelBaseUrl ?? DEFAULT_MODEL_BASE_URL, globalThis.location?.href);
+  const [weights, vocabBytes] = await Promise.all([
+    fetchPinned(new URL("model.rmpw", base), MODEL_FILES["model.rmpw"], options.signal),
+    fetchPinned(new URL("vocab.txt", base), MODEL_FILES["vocab.txt"], options.signal),
+  ]);
+  return createGateModelFromWeights({ weights, vocab: new TextDecoder().decode(vocabBytes), wasm: options.engineWasm });
 }
 
 /** Downloads and verifies the pinned model files, then builds the gate. Throws `GateModelError` on any failure. */
 export async function createGate(options: GateOptions = {}): Promise<Gate> {
-  const base = new URL(options.modelBaseUrl ?? DEFAULT_MODEL_BASE_URL, globalThis.location?.href);
-  const [ort, modelBytes, vocabBytes] = await Promise.all([
-    options.ort ?? defaultRuntime(),
-    fetchPinned(new URL("onnx/model_q4.onnx", base), MODEL_FILES["onnx/model_q4.onnx"], options.signal),
-    fetchPinned(new URL("vocab.txt", base), MODEL_FILES["vocab.txt"], options.signal),
-  ]);
-  const model = await createGateModel(ort, modelBytes, new TextDecoder().decode(vocabBytes), {
-    executionProviders: options.executionProviders,
-  });
+  const model = await fetchGateModel(options);
   return new Gate(model, options.threshold, options.allowlist);
 }

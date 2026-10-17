@@ -1,0 +1,59 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>rampart-edge smoke</title></head>
+<body>
+<script type="module">
+import { createGate, createWorkerGate } from "/dist/index.js";
+
+const modelBaseUrl = `${location.origin}/model/`;
+const now = () => performance.now();
+const p50 = (xs) => xs.slice().sort((a, b) => a - b)[Math.floor(xs.length / 2)];
+const words = ["my", "landlord", "john", "smith", "will", "not", "fix"];
+const tokensOf = (n) => Array.from({ length: n }, (_, i) => words[i % words.length]).join(" ");
+const sample = "My SSN is 452-78-1934 and my landlord John Smith will not fix the heat.";
+
+async function bench(gate) {
+  const sizes = {};
+  for (const n of [32, 128]) {
+    const text = tokensOf(n);
+    const samples = [];
+    for (let i = 0; i < 20; i++) {
+      const t = now();
+      await gate.check(text);
+      samples.push(now() - t);
+    }
+    sizes[n] = p50(samples);
+  }
+  return sizes;
+}
+
+const out = { crossOriginIsolated: globalThis.crossOriginIsolated === true, sharedArrayBuffer: typeof SharedArrayBuffer !== "undefined" };
+try {
+  const t0 = now();
+  const gate = await createGate({ modelBaseUrl });
+  out.main = { createGateMs: now() - t0, engineLoadMs: gate.model.engine.loadMs, memoryPages: gate.model.engine.memoryPages };
+  const t1 = now();
+  const first = await gate.check(sample);
+  out.main.firstCheckMs = now() - t1;
+  out.main.verdict = first.verdict;
+  out.main.spans = first.spans.map((s) => s.type);
+  out.main.p50 = await bench(gate);
+  out.main.tokens32 = gate.model.tokenizer.encode(tokensOf(32)).length;
+  out.main.tokens128 = gate.model.tokenizer.encode(tokensOf(128)).length;
+
+  const worker = new Worker("/tools/browser-smoke/worker.js", { type: "module" });
+  const t2 = now();
+  const remote = await createWorkerGate(worker, { modelBaseUrl });
+  out.worker = { createWorkerGateMs: now() - t2 };
+  const t3 = now();
+  const wfirst = await remote.check(sample);
+  out.worker.firstCheckMs = now() - t3;
+  out.worker.sameDecision = JSON.stringify(wfirst) === JSON.stringify(first);
+  out.worker.p50 = await bench(remote);
+  remote.terminate();
+} catch (error) {
+  out.error = { name: error?.name, stage: error?.stage, message: String(error?.message ?? error) };
+}
+window.__smoke = out;
+document.body.textContent = JSON.stringify(out);
+</script>
+</body></html>

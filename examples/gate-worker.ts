@@ -1,5 +1,6 @@
 /**
- * Worker entry: bundle this file and hand its URL to `new Worker(...)`.
+ * Worker entry: bundle this file and hand its URL to `new Worker(...)`. The worker builds its own engine from the wasm
+ * inlined in the package; it needs no SharedArrayBuffer, COOP/COEP headers or extra files.
  *
  *   // main thread
  *   import { createWorkerGate, createValidatorGate } from "@nationaldesignstudio/rampart-edge";

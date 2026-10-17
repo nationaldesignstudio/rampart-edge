@@ -1,5 +1,5 @@
 ---
-library_name: onnx
+library_name: rampart-edge
 license: cc0-1.0
 language:
   - en
@@ -12,8 +12,7 @@ language:
 tags:
   - pii
   - privacy
-  - onnx
-  - onnxruntime-web
+  - webassembly
   - browser
   - client-side
   - token-classification
@@ -25,11 +24,11 @@ metrics:
 
 # Rampart Edge
 
-`rampart-edge` is a 1.45 MB ONNX model that decides whether a chat message contains personally identifiable information before the message leaves the user's device, and marks the PII spans in the same call. It is the model half of **Rampart Edge**, a client-side PII gate released by National Design Studio; the other half is a set of deterministic validators, and the gate blocks when either half says BLOCK.
+`rampart-edge` is a 1.33 MB 4-bit model (`model.rmpw`) that decides whether a chat message contains personally identifiable information before the message leaves the user's device, and marks the PII spans in the same call. It is the model half of **Rampart Edge**, a client-side PII gate released by National Design Studio; the other half is a set of deterministic validators, and the gate blocks when either half says BLOCK.
 
 ## Usage
 
-Install `@nationaldesignstudio/rampart-edge` and `onnxruntime-web`, and serve `onnx/model_q4.onnx` and `vocab.txt` from this repo under one URL (here `/models/rampart-edge/`, keeping the `onnx/` subfolder).
+Install `@nationaldesignstudio/rampart-edge` (no runtime dependency: the WebAssembly engine is inlined in the package) and serve `model.rmpw` and `vocab.txt` from this repo under one URL (here `/models/rampart-edge/`).
 
 ```ts
 import { createGate } from "@nationaldesignstudio/rampart-edge";
@@ -53,19 +52,20 @@ ssn.basis; // "validator-and-model"
 
 | file | bytes | sha256 |
 |---|---:|---|
-| `onnx/model_q4.onnx` | 1,454,373 | `73fce00c229d8318d7e1f8decccc5ad2dbf7aa45a872364b54d632c38a9eb16c` |
+| `model.rmpw` | 1,331,672 | `b66f7c83d4d68e9e5c9f3738164e71934b990727451daa1758b692418ea18d25` |
 | `vocab.txt` | 173,327 | `ee0684683c7fb15744d0136e671cd7def76ae4d4ddafb72ced864e94c8d32c9a` |
+| `onnx/model_q4.onnx` (reference export, not loaded by the package) | 1,454,373 | `73fce00c229d8318d7e1f8decccc5ad2dbf7aa45a872364b54d632c38a9eb16c` |
 
-`tokenizer.json`, `tokenizer_config.json` and `special_tokens_map.json` describe the same tokenizer for other runtimes. Model + vocab: 1,289,572 bytes gzipped (`gzip -9`, each file separately).
+`model.rmpw` is weight format `RMPW` v1: a 76-byte header (magic, version, the ten shape fields, SHA-256 of the payload), a 42-entry tensor table and 16-byte-aligned tensors: the signed int4 embedding table and its scales, the ten 4-bit block-32 encoder/head matrices with fp32 scales, uint8 position and token-type tables, fp32 biases and LayerNorms. It holds exactly the weights of `onnx/model_q4.onnx` (`engine/export/export_weights.py` reproduces it byte for byte); the engine expands them to fp32 at load. `model.rmpw` + `vocab.txt`: 1,235,800 bytes Brotli (quality 11, each file separately) [MEASURED]. `tokenizer.json`, `tokenizer_config.json` and `special_tokens_map.json` describe the same tokenizer for other runtimes.
 
-Graph inputs `input_ids`, `attention_mask` (int64, `[1, n]`); outputs `gate_logit` (float32, `[1]`; BLOCK probability = sigmoid) and `token_logits` (float32, `[1, n, 19]`) over the BIO labels in `config.json`.
+The engine takes `input_ids` and `attention_mask` for one window of `n ≤ 384` tokens and returns `gate_logit` (BLOCK probability = sigmoid) and `token_logits` (`n × 19`) over the BIO labels in `config.json`; the same names and shapes as the ONNX graph.
 
 ## Architecture
 
 - Base: `microsoft/xtremedistil-l6-h256-uncased`, truncated from 6 layers to 4, with the first layer's weights shared by all four slots.
 - Word embeddings factorized to rank 48 (`vocab × 48` table plus `48 → 256` projection, initialized from the SVD of the pretrained table) and pruned to 23,910 word pieces.
 - Two heads on one encoder: pooled `[CLS]` → `gate_logit`; every token → `token_logits` (`O` plus `B-`/`I-` for nine span types).
-- Exported to ONNX and quantized with MatMulNBits (4-bit, block size 32).
+- Exported to ONNX and quantized with MatMulNBits (4-bit, block size 32); the shipped `model.rmpw` carries those 4-bit weights and scales unchanged.
 
 ## Inference
 
@@ -73,8 +73,9 @@ Graph inputs `input_ids`, `attention_mask` (int64, `[1, n]`); outputs `gate_logi
 - Windows of 384 positions (382 content tokens + `[CLS]`/`[SEP]`), stride 96; a message's probability is the max over its windows.
 - Operating point `t = 0.417801`: the lowest dev threshold with at most 1% false blocks. Not tuned on any benchmark.
 - Spans: each token takes its most likely label (`span_threshold: null`); overlapping windows hand over at a token both label O.
-- 32.8 ms p50 / 37.5 ms p95 at 128 tokens, single-thread WASM with SIMD, `onnxruntime-web` 1.30.0, Chromium.
-- 26.1 ms p50 / 69.3 ms p95 over 799 OpenPII validation messages (one `check` per message, single-thread WASM, Chromium 156, Linux x86 CPU).
+- Runtime: a hand-written Rust→WebAssembly engine (fp32 on the dequantized weights, SIMD128, one thread, no SharedArrayBuffer) inlined in the npm package: 27,260 bytes raw, 8.6 KB Brotli [MEASURED]. Load 10 ms; p50 4.2 / 8.6 / 18.1 / 39.4 / 160 ms at 16 / 32 / 64 / 128 / 384 tokens, Playwright Chromium, Linux x86 CPU [MEASURED, bake-off]. Requires WebAssembly SIMD128 (Chrome 91+, Firefox 89+, Safari 16.4+) [DOC].
+- Parity with onnxruntime-web 1.30 (WASM, one thread, Chromium) on `onnx/model_q4.onnx`, the runtime of 2.x: max |Δ gate logit| 3.3e-5, identical token argmax on 105,854 tokens, 0 decision flips over 12 reference texts, 1,000 dev rows and 354 near-threshold dev rows [MEASURED, `__tests__/parity.test.ts`]. Every evaluation number below was produced with the ONNX runtime and carries over unchanged.
+- 2.x reference: 32.8 ms p50 / 37.5 ms p95 at 128 tokens and 26.1 ms p50 / 69.3 ms p95 over 799 OpenPII validation messages, single-thread WASM with SIMD, `onnxruntime-web` 1.30.0, Chromium 156, Linux x86 CPU.
 
 ## Span types
 
@@ -172,7 +173,8 @@ The gate thresholds the maximum window probability at t = 0.417801, chosen on th
 
 The steps below run from a clone of the [source repository](https://github.com/nationaldesignstudio/rampart-edge) (`bun install`); the Hugging Face files alone hold the weights, tokenizers and this card.
 
-- Runtime: `bun run test` checks the pinned SHA-256s and reruns the reference texts in `__tests__/fixtures/joint-reference.json` against the Python probabilities and spans.
+- Runtime: `bun run test` checks the pinned SHA-256s, reruns the reference texts in `__tests__/fixtures/joint-reference.json` against the Python probabilities and spans, and compares the engine with the archived browser onnxruntime-web logits in `__tests__/fixtures/parity/`.
+- Engine: `bun scripts/build-engine.ts --check` rebuilds `runtime/rampart-engine.wasm` with the pinned Rust toolchain and fails unless it is byte-identical to the committed file.
 - The frozen test split was scored once for the shipped model and is not rescored for this card.
 
 ## Citation

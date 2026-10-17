@@ -12,7 +12,9 @@
     "hidden_size": 256,
     "embedding_rank": 48,
     "vocab_size": 23910,
-    "quantization": "MatMulNBits 4-bit, block size 32"
+    "weights": "4-bit, block size 32 (RMPW v1 on the wire), expanded to fp32 at load",
+    "source_onnx_sha256": "73fce00c229d8318d7e1f8decccc5ad2dbf7aa45a872364b54d632c38a9eb16c",
+    "source_onnx_bytes": 1454373
   },
   "inputs": [
     "input_ids",
@@ -49,10 +51,16 @@
   "max_tokens": 384,
   "stride": 96,
   "window_combination": "max",
+  "engine": {
+    "format": "rmpw",
+    "version": 1,
+    "wasm_sha256": "f5047aeeb78a0156de05059dd13425057684fe6af5217f5a225c6810b0008b41",
+    "wasm_bytes": 27260
+  },
   "files": {
-    "onnx/model_q4.onnx": {
-      "bytes": 1454373,
-      "sha256": "73fce00c229d8318d7e1f8decccc5ad2dbf7aa45a872364b54d632c38a9eb16c"
+    "model.rmpw": {
+      "bytes": 1331672,
+      "sha256": "b66f7c83d4d68e9e5c9f3738164e71934b990727451daa1758b692418ea18d25"
     },
     "vocab.txt": {
       "bytes": 173327,

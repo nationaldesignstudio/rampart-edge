@@ -1,11 +1,12 @@
 /**
  * Gate a chat message in the browser before it is sent.
  *
- *   bun add @nationaldesignstudio/rampart-edge onnxruntime-web
+ *   bun add @nationaldesignstudio/rampart-edge
  *
- * Self-host `onnx/model_q4.onnx` and `vocab.txt` (1.45 MB model + 173 KB vocab; this package's `model/` folder or the
+ * Self-host `model.rmpw` and `vocab.txt` (1.33 MB weights + 173 KB vocab; this package's `model/` folder or the
  * Hugging Face repo root) next to your app and point `modelBaseUrl` at them; the files are checked against
- * pinned SHA-256s before they are used. Root-relative paths like the one below resolve in a browser only.
+ * pinned SHA-256s before they are used. The wasm engine is inlined in the package, so nothing else is fetched.
+ * Root-relative paths like the one below resolve in a browser only.
  */
 import { createGate, createValidatorGate, GateModelError, type Gate } from "@nationaldesignstudio/rampart-edge";
 

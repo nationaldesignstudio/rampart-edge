@@ -16,7 +16,7 @@ function utf16Key(text: string, spans: readonly { start: number; end: number; ty
   return spans.map((s) => [at[s.start], at[s.end], s.type]);
 }
 
-describe("span redactor (gate model's span head, onnxruntime-web, wasm)", () => {
+describe("span redactor (gate model's span head on the inlined wasm engine)", () => {
   it("decodes the reference spans at the model's threshold", async () => {
     expect(redactor.threshold).toBe(reference.threshold);
     for (const sample of Object.values(reference.samples)) {

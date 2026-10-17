@@ -1,8 +1,9 @@
 /**
  * Web Worker host for the gate.
  *
- * Model inference takes ~30 ms and would freeze the page while it runs, so the gate can live on a
- * worker thread. The main thread talks to it through {@link createWorkerGate}, which gives back the
+ * Model inference is synchronous (a few milliseconds per window, up to ~160 ms for a full 384-token window)
+ * and would block the page while it runs, so the gate can live on a worker thread. The engine needs no threads,
+ * SharedArrayBuffer or cross-origin isolation: one engine per worker, created from the wasm inlined in this module. The main thread talks to it through {@link createWorkerGate}, which gives back the
  * same `check(text)` contract as {@link Gate}, so the rest of an app does not care which thread
  * decides. Validators also run locally on the main thread via `validators(text)` for synchronous use.
  *
@@ -16,8 +17,8 @@ import { GateModelError } from "./model.js";
 import type { GateDecision } from "./scoring.js";
 import { gate as validatorGate, type GateResult } from "./validators/index.js";
 
-/** `GateOptions` minus the parts that cannot cross a `postMessage` boundary (`ort`, `signal`). */
-export type WorkerGateOptions = Omit<GateOptions, "ort" | "signal" | "modelBaseUrl"> & {
+/** `GateOptions` minus the parts that do not cross a `postMessage` boundary (`signal`, `engineWasm`); the worker uses the inlined engine. */
+export type WorkerGateOptions = Omit<GateOptions, "signal" | "engineWasm" | "modelBaseUrl"> & {
   readonly modelBaseUrl?: string;
 };
 

@@ -1,10 +1,10 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import * as ort from "onnxruntime-web";
 
 import reference from "./fixtures/joint-reference.json";
 import { Gate } from "../src/gate";
-import { createGateModel, GateModelError, sha256Hex, type ModelConfig, type OrtLike } from "../src/model";
+import type { GateEngine } from "../src/engine";
+import { createGateModel, GateModelError, sha256Hex, type ModelConfig } from "../src/model";
 import { createRedactor } from "../src/redactor";
 import { decodeSpans, deterministicUnion } from "../src/spans";
 import { createWorkerGate, registerGateWorker, type WorkerPort } from "../src/worker";
@@ -27,27 +27,23 @@ const replay = new Map<string, { gate: number; tokens: number[][] }>();
 for (const s of Object.values(reference.samples)) {
   s.windows.forEach((w, i) => replay.set(s.ids.slice(w.start, w.end).join(","), { gate: s.gateLogits[i], tokens: s.tokenLogits[i] }));
 }
-function replayOrt(outputNames = ["gate_logit", "token_logits"]): OrtLike {
+/** An engine that answers each window with the archived reference logits; `labels` widens or narrows the token head. */
+function replayEngine(labels = L): GateEngine {
   return {
-    InferenceSession: {
-      create: async () => ({
-        inputNames: ["input_ids", "attention_mask"],
-        outputNames,
-        run: async (feeds: Record<string, { data: unknown }>) => {
-          const ids = Array.from(feeds.input_ids.data as BigInt64Array, Number);
-          const hit = ids.length === 2 ? { gate: -8, tokens: [] } : replay.get(ids.slice(1, -1).join(","));
-          if (!hit) throw new Error("window not in the reference fixture");
-          const logits = new Float32Array(ids.length * L);
-          hit.tokens.forEach((row, t) => logits.set(row, (t + 1) * L));
-          return { gate_logit: { data: new Float32Array([hit.gate]) }, token_logits: { data: logits } };
-        },
-      }),
+    run: (input) => {
+      const ids = Array.from(input, Number);
+      const hit = ids.length === 2 ? { gate: -8, tokens: [] } : replay.get(ids.slice(1, -1).join(","));
+      if (!hit) throw new Error("window not in the reference fixture");
+      const logits = new Float32Array(ids.length * labels);
+      if (labels === L) hit.tokens.forEach((row, t) => logits.set(row, (t + 1) * L));
+      return { gateLogit: hit.gate, tokenLogits: logits };
     },
-    Tensor: ort.Tensor as never,
+    memoryPages: 1,
+    loadMs: 0,
   };
 }
 
-const model = await createGateModel(replayOrt(), new Uint8Array(), vocabText, { config });
+const model = createGateModel(replayEngine(), vocabText, { config });
 const gate = new Gate(model, 0.5);
 const key = (spans: readonly { start: number; end: number; type: string }[]) => spans.map((s) => [s.start, s.end, s.type]);
 /** The Python reference reports code points; the package reports UTF-16 offsets. */
@@ -143,13 +139,19 @@ describe("joint gate + span head", () => {
     }
   });
 
-  it("refuses a graph without the span output and a config without O first", async () => {
-    const missing = await createGateModel(replayOrt(["gate_logit"]), new Uint8Array(), vocabText, { config }).catch((e) => e);
+  it("refuses an engine without the span head and a config without O first", () => {
+    const attempt = (engine: GateEngine, c: ModelConfig) => {
+      try {
+        createGateModel(engine, vocabText, { config: c });
+        return null;
+      } catch (e) {
+        return e as GateModelError;
+      }
+    };
+    const missing = attempt(replayEngine(0), config);
     expect(missing).toBeInstanceOf(GateModelError);
-    expect(missing.stage).toBe("graph");
-    const single = { ...config, output: "gate_logit" };
-    await expect(createGateModel(replayOrt(), new Uint8Array(), vocabText, { config: single })).rejects.toMatchObject({ stage: "graph" });
-    const bad = { ...config, span_labels: ["B-NAME", "O", "I-NAME"] };
-    await expect(createGateModel(replayOrt(), new Uint8Array(), vocabText, { config: bad })).rejects.toMatchObject({ stage: "graph" });
+    expect(missing?.stage).toBe("graph");
+    expect(attempt(replayEngine(), { ...config, output: "gate_logit" })).toMatchObject({ stage: "graph" });
+    expect(attempt(replayEngine(), { ...config, span_labels: ["B-NAME", "O", "I-NAME"] })).toMatchObject({ stage: "graph" });
   });
 });

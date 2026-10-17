@@ -37,7 +37,7 @@ describe("worker gate", () => {
   it("rejects init with the worker's GateModelError so callers can fall back", async () => {
     const { main, worker } = channel();
     registerGateWorker(worker, async () => {
-      throw new GateModelError("integrity", "model/onnx/model_q4.onnx: sha256 mismatch");
+      throw new GateModelError("integrity", "model/model.rmpw: sha256 mismatch");
     });
     const error = await createWorkerGate(main).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(GateModelError);

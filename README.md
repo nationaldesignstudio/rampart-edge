@@ -1,25 +1,25 @@
 # Rampart Edge
 
-Rampart Edge is a client-side PII gate for AI chat. Before a message leaves the browser it is read twice: by deterministic validators (SSNs, cards, routing numbers, phones, emails, national ids) and by a 1.45 MB ONNX model. If either says BLOCK, the message is not sent. The gate answers **BLOCK** or **ALLOW** plus the model's probability, and the same model call marks the PII spans, so the redactor needs no second model.
+Rampart Edge is a client-side PII gate for AI chat. Before a message leaves the browser it is read twice: by deterministic validators (SSNs, cards, routing numbers, phones, emails, national ids) and by a 1.3 MB 4-bit model running on a 27 KB WebAssembly engine inlined in the package. If either says BLOCK, the message is not sent. The gate answers **BLOCK** or **ALLOW** plus the model's probability, and the same model call marks the PII spans, so the redactor needs no second model.
 
 Built by National Design Studio as a new, smaller version of [Rampart](https://github.com/nationaldesignstudio/rampart), tuned for chat. Everything runs on the user's device; no server is in the loop.
 
 | | Rampart Edge | Rampart |
 |---|---:|---:|
-| Model download | **1.45 MB** (+ 173 KB vocab; 1.29 MB gzipped together) | 14.7 MB |
+| Complete download, Brotli (engine + weights + vocab) | **1.31 MB** [MEASURED] | 14.7 MB + onnxruntime-web |
 | PII caught, frozen test (30,863 rows) | **98.19%** | 87.48% |
 | Ordinary messages blocked, frozen test | **1.13%** | 11.77% |
-| p50 latency in the browser, WASM, one thread | 26 ms | — |
+| p50 latency in the browser at 128 tokens, WASM, one thread | 39 ms [MEASURED, Chromium, see Runtime] | — |
 
 Frozen-test rows are the shipped model at its shipped threshold, scored once after the model and threshold were fixed. On the dev set it was selected on: 98.24% catch at 0.99% false blocks. See [MODEL_CARD.md](MODEL_CARD.md) for every number and where it comes from.
 
 ## Install
 
 ```bash
-bun add @nationaldesignstudio/rampart-edge onnxruntime-web
+bun add @nationaldesignstudio/rampart-edge
 ```
 
-The package ships a trimmed onnxruntime-web 1.30.0 engine in `runtime/`: 1.44 MB Brotli (2.2 MB gzip), compared with 2.36 MB Brotli for the stock engine. It contains only the kernels Rampart and Rampart Edge use, and gives bit-identical outputs. When the gate loads `onnxruntime-web` 1.30.0 itself and you haven't set `ort.env.wasm.wasmPaths` or `wasmBinary`, it uses this engine automatically. If you pass your own `ort`, call `applyBundledRuntime(ort.env)` before `createGate` to opt in. Any other onnxruntime-web version keeps its stock engine. `tools/ort-engine` rebuilds the engine.
+One package, no runtime dependency. The model runs on a hand-written Rust→WebAssembly engine (fp32 math on 4-bit weights expanded at load, SIMD128, one thread) that is inlined in `dist/index.js`, so the browser fetches the two model files and nothing else. Upgrading from 2.x: see [`CHANGELOG.md`](CHANGELOG.md).
 
 ```ts
 import { createGate } from "@nationaldesignstudio/rampart-edge";
@@ -42,11 +42,29 @@ ssn.spans;    // [{ start: 10, end: 21, type: "GOV_ID", probability: 1, source: 
 
 These are the outputs of the shipped model.
 
-Self-host `model/onnx/model_q4.onnx` and `model/vocab.txt` under `modelBaseUrl`. Both files are checked against the byte count and SHA-256 in [`model/config.json`](model/config.json) before they are used; a mismatch throws `GateModelError("integrity")`. Without `modelBaseUrl` the files come from Hugging Face. If the model cannot load, fall back to `createValidatorGate()` so the deterministic half keeps working (see [`examples/basic-chat.ts`](https://github.com/nationaldesignstudio/rampart-edge/blob/main/examples/basic-chat.ts)).
+Self-host `model/model.rmpw` and `model/vocab.txt` under `modelBaseUrl`. Both files are checked against the byte count and SHA-256 in [`model/config.json`](model/config.json) before they are used; a mismatch throws `GateModelError("integrity")`. Without `modelBaseUrl` the files come from Hugging Face. If the model cannot load, fall back to `createValidatorGate()` so the deterministic half keeps working (see [`examples/basic-chat.ts`](https://github.com/nationaldesignstudio/rampart-edge/blob/main/examples/basic-chat.ts)).
 
 Inference runs on the calling thread by default. To keep the page responsive, run the gate in a Web Worker: bundle [`examples/gate-worker.ts`](https://github.com/nationaldesignstudio/rampart-edge/blob/main/examples/gate-worker.ts) as the worker entry and create the client with `createWorkerGate(new Worker(url, { type: "module" }), { modelBaseUrl })`. It returns the same `check(text)` contract as `createGate`.
 
-With Vite, set `optimizeDeps: { exclude: ["@nationaldesignstudio/rampart-edge"] }` so the dev server can serve `runtime/`, and `worker: { format: "es" }` for the worker gate.
+The worker builds its own engine from the inlined wasm; no SharedArrayBuffer, COOP/COEP headers or extra files are involved. With Vite, set `worker: { format: "es" }` for the worker gate.
+
+## Runtime
+
+| | 3.0 (this engine) | 2.x (onnxruntime-web 1.30, trimmed) |
+|---|---:|---:|
+| Engine, Brotli | 8.6 KB, inlined in `dist/index.js` [MEASURED] | 1,445 KB (`runtime/`) [MEASURED] |
+| `model.rmpw` / `model_q4.onnx`, Brotli | 1,165 KB [MEASURED] | 1,172 KB [MEASURED] |
+| `vocab.txt`, Brotli | 70 KB [MEASURED] | 70 KB [MEASURED] |
+| Complete download, Brotli (`dist/index.js` + weights + vocab) | **1,309 KB** [MEASURED] | **2,746 KB** [MEASURED] |
+| Engine load (compile + expand weights) | 10 ms [MEASURED] | 325 ms [MEASURED] |
+| p50 `check` at 32 / 128 tokens, one thread | 8.6 / 39 ms [MEASURED] | 18 / 50 ms [MEASURED] |
+| Wasm memory after load | 194 pages (12.1 MB) [MEASURED] | — |
+
+Sizes are Brotli quality 11 of the built files. Load and p50 are the bake-off that approved the engine: Playwright Chromium on one Linux x86 VM, the fp32 engine against onnxruntime-web 1.30 on `model_q4.onnx`, forward pass only. The shipped build's own smoke (`bun run smoke:browser`: `dist/index.js` in a plain page and in a Worker, no COOP/COEP, `model.rmpw` over HTTP, p50 of 20 full `gate.check` calls including tokenizer and validators): Chromium 153 — engine load 23 ms, first `check` 10 ms, p50 6.3 / 25.9 ms at 32 / 128 tokens on the page and 8.1 / 31.3 ms through the Worker; WebKit 26.6 — load 14 ms, first `check` 13 ms, p50 10 / 41 ms on the page and 10 / 43 ms through the Worker; 194 wasm pages in both, `crossOriginIsolated` false, identical decisions on both threads [MEASURED].
+
+Parity: the engine is checked in CI against the archived output of onnxruntime-web 1.30 (WASM, one thread, Chromium) on `model_q4.onnx`, the runtime 2.x shipped: max |Δ gate logit| 1.9e-6 on the 12 reference texts, 2.1e-5 on 1,000 dev rows, 3.3e-5 on 354 near-threshold dev rows; identical token argmax on 105,854 tokens; 0 decision flips at the shipped threshold [MEASURED, `__tests__/parity.test.ts`]. Both compute fp32 on the same dequantized weights; nothing was retrained.
+
+Browser support is WebAssembly SIMD128: Chrome 91+, Firefox 89+, Safari 16.4+ [DOC]. If `createGate` throws `GateModelError` (`stage: "runtime"` when WebAssembly SIMD is unavailable, `"download"`, `"integrity"`, `"session"`, `"graph"` or `"inference"`), fall back to `createValidatorGate()`.
 
 ## Allowlist
 
@@ -106,7 +124,7 @@ result.spans; // [{ start, end, type, probability, source }, ...] with UTF-16 of
 | Public redacted-source benchmark, held-out partition: 118 PDF documents, 1,857 gold spans | 10.2% | 8.0% | 0.755 / 0.815 / **0.784** |
 | Synthetic PDF dev set (`span.pdf-dev.v2`): 268 rendered PDF documents, 1,302 gold spans | 2.8% | 45.6% | 0.536 / 0.963 / **0.689** |
 
-Scored with the shipped runtime (4-bit ONNX model, validators, date rules). Leak is the share of gold PII values still visible after redaction; on the benchmark most leaks are `OTHER_ID` (58% leaked), `URL_HANDLE` (62%) and `NAME` (12%). Over-redaction is the share of public terms (agencies, places, hotlines, listed officials) that were redacted; on the PDF set it is agency hotlines (188 of 189) and named public officials (511 of 677). Relaxed F1 counts a predicted span as correct when it overlaps a gold span.
+Scored with the shipped runtime (4-bit model, validators, date rules). Leak is the share of gold PII values still visible after redaction; on the benchmark most leaks are `OTHER_ID` (58% leaked), `URL_HANDLE` (62%) and `NAME` (12%). Over-redaction is the share of public terms (agencies, places, hotlines, listed officials) that were redacted; on the PDF set it is agency hotlines (188 of 189) and named public officials (511 of 677). Relaxed F1 counts a predicted span as correct when it overlaps a gold span.
 
 See [`examples/redact-pdf-text.ts`](https://github.com/nationaldesignstudio/rampart-edge/blob/main/examples/redact-pdf-text.ts) for the gate-then-redact flow.
 
@@ -114,7 +132,8 @@ See [`examples/redact-pdf-text.ts`](https://github.com/nationaldesignstudio/ramp
 
 ```bash
 bun install
-bun run test                  # tokenizer parity, windowing, validators, model vs Python reference
+bun run test                  # tokenizer parity, windowing, validators, model vs Python reference, engine vs archived browser ORT output
+bun run smoke:browser         # Playwright Chromium/WebKit smoke of dist/ (see tools/browser-smoke/README.md)
 ```
 
 The false-positive regression set is 137 ordinary messages Rampart blocked plus 29 BLOCK twins. The shipped model blocks 4 of 137 and catches 29 of 29.
@@ -127,11 +146,13 @@ The model was trained on a corpus built for this project: public government text
 
 ```
 index.ts            public API
-src/                gate, model loader, tokenizer, scoring, validators
-model/              weights (Git LFS), vocab, tokenizer.json, config
+src/                gate, model, engine (src/engine.ts + generated src/engine-wasm.ts), tokenizer, scoring, validators
+engine/             the Rust→wasm engine crate; `bun scripts/build-engine.ts` rebuilds runtime/rampart-engine.wasm
+model/              model.rmpw (RMPW v1 weights), vocab, config; onnx/ holds the ONNX reference export (Git LFS, not shipped)
 src/redactor.ts     span redactor on the gate model (`@nationaldesignstudio/rampart-edge/redactor`)
 src/worker.ts       Web Worker host + client (`createWorkerGate`)
-__tests__/          vitest suites and the Python reference fixture
+__tests__/          vitest suites, the Python reference fixture, archived browser-ORT parity references (fixtures/parity/)
+tools/browser-smoke Playwright page + Worker smoke of dist/ over plain HTTP
 examples/           browser usage
 ```
 
@@ -148,4 +169,4 @@ examples/           browser usage
 
 ## License
 
-Code, weights and documentation: [CC0 1.0](LICENSE). Third-party parts keep their own licenses: `model/vocab.txt` is Google's BERT vocabulary (Apache-2.0) and `runtime/` is ONNX Runtime (MIT).
+Code, weights and documentation: [CC0 1.0](LICENSE). Third-party parts keep their own licenses: `model/vocab.txt` is Google's BERT vocabulary (Apache-2.0).

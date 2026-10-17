@@ -14,7 +14,7 @@ const cases: ReadonlyArray<{ text: string; verdict: GateDecision["verdict"]; bas
 
 describe("public API: createGate-shaped gate over the committed model", () => {
   it("exports the pinned model files and the default threshold", () => {
-    expect(Object.keys(MODEL_FILES).sort()).toEqual(["onnx/model_q4.onnx", "vocab.txt"]);
+    expect(Object.keys(MODEL_FILES).sort()).toEqual(["model.rmpw", "vocab.txt"]);
     expect(gate.threshold).toBe(BLOCK_THRESHOLD);
   });
 

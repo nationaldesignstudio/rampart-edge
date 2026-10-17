@@ -6,10 +6,10 @@
  * Only reachable through the `./redactor` package export. `createRedactor({ gate })` reuses a loaded gate and downloads nothing.
  */
 import { assertThreshold } from "./scoring.js";
-import { DEFAULT_MODEL_BASE_URL, defaultRuntime, MODEL_FILES, type Gate } from "./gate.js";
+import { DEFAULT_MODEL_BASE_URL, fetchGateModel, type Gate, type GateOptions } from "./gate.js";
 import { gate as validatorGate } from "./validators/index.js";
 import { isGovEmail } from "./validators/rules.js";
-import { createGateModel, fetchPinned, GateModelError, type GateModel, type OrtLike } from "./model.js";
+import { GateModelError, type GateModel } from "./model.js";
 import {
   decodeSpans,
   deterministicUnion,
@@ -25,7 +25,7 @@ import {
 } from "./spans.js";
 import { WordPieceTokenizer } from "./tokenizer.js";
 
-export { GateModelError, DEFAULT_MODEL_BASE_URL, type OrtLike };
+export { GateModelError, DEFAULT_MODEL_BASE_URL };
 
 export const REDACTED_PLACEHOLDER = "[REDACTED]";
 
@@ -128,26 +128,14 @@ export class Redactor {
   }
 }
 
-export interface RedactorOptions extends RedactOptions {
-  /** An `onnxruntime-web` (or `onnxruntime-node`) module. Defaults to `import("onnxruntime-web")`. */
-  readonly ort?: OrtLike;
-  /** Same base as the gate: serves `onnx/model_q4.onnx` and `vocab.txt`. */
-  readonly modelBaseUrl?: string | URL;
+export interface RedactorOptions extends RedactOptions, Pick<GateOptions, "modelBaseUrl" | "engineWasm" | "signal"> {
   /** A gate already loaded on this thread; redaction reuses its model and downloads nothing. */
   readonly gate?: Gate;
-  readonly executionProviders?: readonly string[];
-  readonly signal?: AbortSignal;
 }
 
 /** Builds the redactor from the gate model's span head, reusing `options.gate` or downloading the gate's pinned files. Throws `GateModelError` on any failure. */
 export async function createRedactor(options: RedactorOptions = {}): Promise<Redactor> {
   if (options.gate?.model) return new Redactor(redactorModelFromGate(options.gate.model), options);
-  const root = new URL(options.modelBaseUrl ?? DEFAULT_MODEL_BASE_URL, globalThis.location?.href);
-  const [ort, modelBytes, vocabBytes] = await Promise.all([
-    options.ort ?? defaultRuntime(),
-    fetchPinned(new URL("onnx/model_q4.onnx", root), MODEL_FILES["onnx/model_q4.onnx"], options.signal),
-    fetchPinned(new URL("vocab.txt", root), MODEL_FILES["vocab.txt"], options.signal),
-  ]);
-  const model = await createGateModel(ort, modelBytes, new TextDecoder().decode(vocabBytes), { executionProviders: options.executionProviders });
+  const model = await fetchGateModel(options);
   return new Redactor(redactorModelFromGate(model), options);
 }

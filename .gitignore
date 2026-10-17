@@ -2,3 +2,4 @@ node_modules/
 dist/
 hf-export/
 **/__pycache__/
+tools/browser-smoke/results.json

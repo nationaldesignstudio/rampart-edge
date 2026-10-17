@@ -1,0 +1,117 @@
+{
+ "dev": {
+  "file": "work/splits/dev.jsonl",
+  "rows": 32202,
+  "sha256": "17fe17e0d7138945d648cddabf59a1364c9ca3a8e29d5c421840bf1afee7ac79"
+ },
+ "model": "model_q4.onnx",
+ "sets": {
+  "fixture": {
+   "source": "rampart-edge __tests__/fixtures/joint-reference.json",
+   "file": "fixture.json",
+   "rows": 12,
+   "windows": 14,
+   "tokens": 1277,
+   "generated": {
+    "runtime": "onnxruntime-web",
+    "onnxruntime_web": "1.30.0",
+    "execution_provider": "wasm",
+    "num_threads": 1,
+    "proxy": false,
+    "simd": null,
+    "browser": "Chromium 153.0.8010.12",
+    "batch": 1,
+    "model": {
+     "file": "model_q4.onnx",
+     "bytes": 1454373,
+     "sha256": "73fce00c229d8318d7e1f8decccc5ad2dbf7aa45a872364b54d632c38a9eb16c"
+    },
+    "tokenizer": {
+     "max_tokens": 384,
+     "stride": 96,
+     "vocab_sha256": "ee0684683c7fb15744d0136e671cd7def76ae4d4ddafb72ced864e94c8d32c9a"
+    },
+    "labels": 19,
+    "elapsed_s": 1
+   }
+  },
+  "dev-1000": {
+   "source": "random.Random(0).sample(dev_rows, 1000) over dev.jsonl sha256 17fe17e0d7138945",
+   "n_block": 147,
+   "file": "dev-1000.json",
+   "rows": 1000,
+   "windows": 1025,
+   "tokens": 64325,
+   "generated": {
+    "runtime": "onnxruntime-web",
+    "onnxruntime_web": "1.30.0",
+    "execution_provider": "wasm",
+    "num_threads": 1,
+    "proxy": false,
+    "simd": null,
+    "browser": "Chromium 153.0.8010.12",
+    "batch": 1,
+    "model": {
+     "file": "model_q4.onnx",
+     "bytes": 1454373,
+     "sha256": "73fce00c229d8318d7e1f8decccc5ad2dbf7aa45a872364b54d632c38a9eb16c"
+    },
+    "tokenizer": {
+     "max_tokens": 384,
+     "stride": 96,
+     "vocab_sha256": "ee0684683c7fb15744d0136e671cd7def76ae4d4ddafb72ced864e94c8d32c9a"
+    },
+    "labels": 19,
+    "elapsed_s": 27
+   }
+  },
+  "near-threshold": {
+   "source": "all 32202 dev rows (dev.jsonl sha256 17fe17e0d7138945) screened with browser-exact Python ORT (accuracy_level 0, batch 64)",
+   "band": [
+    0.15,
+    0.85
+   ],
+   "strict_band": [
+    0.3,
+    0.55
+   ],
+   "screen": {
+    "rows_in_band": 354,
+    "rows_in_strict": 104,
+    "n_block": 99
+   },
+   "browser_confirm": {
+    "rows_in_band": 354,
+    "rows_in_strict": 104,
+    "screen_strict_still_strict": 104,
+    "max_abs_dprob_screen_vs_browser": 4e-06
+   },
+   "file": "near-threshold.json",
+   "rows": 354,
+   "windows": 379,
+   "tokens": 40252,
+   "generated": {
+    "runtime": "onnxruntime-web",
+    "onnxruntime_web": "1.30.0",
+    "execution_provider": "wasm",
+    "num_threads": 1,
+    "proxy": false,
+    "simd": null,
+    "browser": "Chromium 153.0.8010.12",
+    "batch": 1,
+    "model": {
+     "file": "model_q4.onnx",
+     "bytes": 1454373,
+     "sha256": "73fce00c229d8318d7e1f8decccc5ad2dbf7aa45a872364b54d632c38a9eb16c"
+    },
+    "tokenizer": {
+     "max_tokens": 384,
+     "stride": 96,
+     "vocab_sha256": "ee0684683c7fb15744d0136e671cd7def76ae4d4ddafb72ced864e94c8d32c9a"
+    },
+    "labels": 19,
+    "elapsed_s": 18
+   }
+  }
+ }
+}

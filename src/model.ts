@@ -1,4 +1,5 @@
 import config from "../model/config.json";
+import { createEngine, EngineError, engineWasmBytes, type GateEngine } from "./engine.js";
 import { combineWindows, contentWindows, sigmoid, withSpecialTokens, type ModelScore } from "./scoring.js";
 import { isSpanLabelSet, softmaxRows, spanWindows, type TokenProbabilities } from "./spans.js";
 import { WordPieceTokenizer } from "./tokenizer.js";
@@ -41,27 +42,25 @@ export function readSpanHead(c: ModelConfig): SpanHead | null {
 }
 
 const MODEL_CONFIG = config as ModelConfig;
-/** Exact graph names of `model/onnx/model_q4.onnx`; a different export fails loudly at load. */
+/** Input names of the source graph `model/onnx/model_q4.onnx`, kept for provenance; the engine takes the same two inputs. */
 export const MODEL_INPUTS = ["input_ids", "attention_mask"] as const;
-/** Name of the gate's logit output. */
+/** Name of the gate's logit output in the source graph. */
 export const MODEL_OUTPUT: string = typeof MODEL_CONFIG.output === "string" ? MODEL_CONFIG.output : MODEL_CONFIG.output[0];
 /** The shipped model's span head, or null when it is gate only. */
 export const MODEL_SPAN_HEAD: SpanHead | null = readSpanHead(MODEL_CONFIG);
 
-export type OrtTensor = { readonly data: unknown };
-export type OrtSession = {
-  readonly inputNames: readonly string[];
-  readonly outputNames: readonly string[];
-  run(feeds: Record<string, OrtTensor>): Promise<Record<string, OrtTensor>>;
-};
-/** The slice of `onnxruntime-web` (or `onnxruntime-node`) the gate needs. */
-export type OrtLike = {
-  InferenceSession: {
-    create(model: Uint8Array, options: { executionProviders: string[] }): Promise<OrtSession>;
-  };
-  Tensor: new (type: "int64", data: BigInt64Array, dims: number[]) => OrtTensor;
-};
-
+/**
+ * One error class for every way the model half can fail, so hosts can fall back to `createValidatorGate()` and log
+ * the `stage`. Engine failures keep their `EngineError` as `cause` and map onto these stages:
+ *
+ * | `EngineError.stage` | `GateModelError.stage` | meaning |
+ * |---|---|---|
+ * | `wasm` | `runtime` | the engine wasm could not be compiled or instantiated (no WebAssembly SIMD128) |
+ * | `format` | `graph` | the weights are not the RMPW v1 model this package was built for |
+ * | `integrity` | `integrity` | the weight payload does not match its embedded SHA-256 (like a failed file pin) |
+ * | `init` | `session` | the engine trapped or refused while expanding the weights |
+ * | `range`, `numeric` | `inference` | a window was rejected or produced a non-finite logit |
+ */
 export class GateModelError extends Error {
   readonly stage: "runtime" | "download" | "integrity" | "session" | "graph" | "inference";
   constructor(stage: GateModelError["stage"], message: string, options?: ErrorOptions) {
@@ -69,6 +68,22 @@ export class GateModelError extends Error {
     this.name = "GateModelError";
     this.stage = stage;
   }
+}
+
+const ENGINE_STAGES: Record<EngineError["stage"], GateModelError["stage"]> = {
+  wasm: "runtime",
+  format: "graph",
+  integrity: "integrity",
+  init: "session",
+  range: "inference",
+  numeric: "inference",
+};
+
+/** Wraps an engine failure as the `GateModelError` stage hosts already handle; other errors become `inference`. */
+export function fromEngineError(error: unknown, fallback: GateModelError["stage"] = "inference"): GateModelError {
+  if (error instanceof GateModelError) return error;
+  if (error instanceof EngineError) return new GateModelError(ENGINE_STAGES[error.stage], error.message, { cause: error });
+  return new GateModelError(fallback, error instanceof Error ? error.message : String(error), { cause: error });
 }
 
 export type PinnedFile = { readonly bytes: number; readonly sha256: string };
@@ -107,6 +122,8 @@ export type ModelAnalysis = {
 export type GateModel = {
   readonly tokenizer: WordPieceTokenizer;
   readonly spanHead: SpanHead | null;
+  /** The engine running the forward pass (`loadMs`, `memoryPages`). */
+  readonly engine: GateEngine;
   /** BLOCK probability for `text`: max over 384-token windows. The text never leaves the process. */
   score(text: string): Promise<ModelScore>;
   /** One inference per window: the gate score and, with a span head, token probabilities. */
@@ -114,82 +131,78 @@ export type GateModel = {
 };
 
 export type GateModelOptions = {
-  readonly executionProviders?: readonly string[];
   /** Graph and decode fields; defaults to the shipped `model/config.json`. */
   readonly config?: ModelConfig;
 };
 
-/** Builds the classifier half of the gate from verified model bytes and the matching `vocab.txt`. */
-export async function createGateModel(
-  ort: OrtLike,
-  modelBytes: Uint8Array,
-  vocab: string,
-  options: GateModelOptions = {},
-): Promise<GateModel> {
-  const tokenizer = new WordPieceTokenizer(vocab);
-  let session: OrtSession;
+export type GateModelSource = {
+  /** Verified `model.rmpw` bytes. */
+  readonly weights: Uint8Array;
+  /** Contents of the matching `vocab.txt`. */
+  readonly vocab: string;
+  /** The engine wasm; defaults to the copy inlined in this package (`engineWasmBytes()`). */
+  readonly wasm?: BufferSource | WebAssembly.Module;
+} & GateModelOptions;
+
+/** Builds the engine from `weights` (and the inlined wasm unless `wasm` is given), then the classifier half of the gate. */
+export async function createGateModelFromWeights(source: GateModelSource): Promise<GateModel> {
+  let engine: GateEngine;
   try {
-    session = await ort.InferenceSession.create(modelBytes, {
-      executionProviders: [...(options.executionProviders ?? ["wasm"])],
-    });
+    engine = await createEngine(source.wasm ?? engineWasmBytes(), source.weights);
   } catch (error) {
-    throw new GateModelError("session", "the runtime could not create a session for the gate model", {
-      cause: error,
-    });
+    throw fromEngineError(error, "session");
   }
+  return createGateModel(engine, source.vocab, { config: source.config });
+}
+
+/**
+ * Builds the classifier half of the gate from a loaded engine and the matching `vocab.txt`. Runs one probe window so
+ * an engine whose span head does not match `config` fails here with `GateModelError("graph")`, not on the first message.
+ */
+export function createGateModel(engine: GateEngine, vocab: string, options: GateModelOptions = {}): GateModel {
+  const tokenizer = new WordPieceTokenizer(vocab);
   const modelConfig = options.config ?? MODEL_CONFIG;
   const spanHead = readSpanHead(modelConfig);
-  const gateOutput = typeof modelConfig.output === "string" ? modelConfig.output : modelConfig.output[0];
-  const outputs = spanHead === null ? [gateOutput] : [gateOutput, spanHead.output];
-  const inputs = [...session.inputNames].sort().join(",");
-  if (inputs !== [...MODEL_INPUTS].sort().join(",") || !outputs.every((o) => session.outputNames.includes(o))) {
-    throw new GateModelError(
-      "graph",
-      `gate graph exposes ${session.inputNames.join(",")} -> ${session.outputNames.join(",")}`,
-    );
-  }
   const nLabels = spanHead?.labels.length ?? 0;
 
-  async function runWindow(window: readonly number[]): Promise<{ probability: number; rows: number[][] | null }> {
-    const ids = withSpecialTokens(window, tokenizer.clsId, tokenizer.sepId);
-    const dims = [1, ids.length];
-    const feeds = {
-      input_ids: new ort.Tensor("int64", BigInt64Array.from(ids, BigInt), dims),
-      attention_mask: new ort.Tensor("int64", new BigInt64Array(ids.length).fill(1n), dims),
-    };
-    let result: Record<string, OrtTensor>;
+  function forward(ids: readonly number[]): { gateLogit: number; tokenLogits: Float32Array } {
     try {
-      result = await session.run(feeds);
+      return engine.run(ids);
     } catch (error) {
-      throw new GateModelError("inference", "gate inference failed", { cause: error });
+      throw fromEngineError(error);
     }
-    const gate = result[gateOutput]?.data;
-    if (!(gate instanceof Float32Array) || gate.length !== 1) {
-      throw new GateModelError("inference", `${gateOutput} is not a single float32`);
+  }
+
+  const probe = forward(withSpecialTokens([], tokenizer.clsId, tokenizer.sepId));
+  if (probe.tokenLogits.length % 2 !== 0 || (spanHead !== null && probe.tokenLogits.length !== 2 * nLabels)) {
+    throw new GateModelError("graph", `engine span head has ${probe.tokenLogits.length / 2} labels, config declares ${nLabels}`);
+  }
+
+  function runWindow(window: readonly number[]): { probability: number; rows: number[][] | null } {
+    const ids = withSpecialTokens(window, tokenizer.clsId, tokenizer.sepId);
+    const { gateLogit, tokenLogits } = forward(ids);
+    if (spanHead === null) return { probability: sigmoid(gateLogit), rows: null };
+    if (tokenLogits.length !== ids.length * nLabels) {
+      throw new GateModelError("inference", `token logits are not [${ids.length}, ${nLabels}]`);
     }
-    if (spanHead === null) return { probability: sigmoid(gate[0]), rows: null };
-    const logits = result[spanHead.output]?.data;
-    if (!(logits instanceof Float32Array) || logits.length !== ids.length * nLabels) {
-      throw new GateModelError("inference", `${spanHead.output} is not float32 [1, ${ids.length}, ${nLabels}]`);
-    }
-    return { probability: sigmoid(gate[0]), rows: softmaxRows(logits, ids.length, nLabels) };
+    return { probability: sigmoid(gateLogit), rows: softmaxRows(tokenLogits, ids.length, nLabels) };
   }
 
   async function analyze(text: string): Promise<ModelAnalysis> {
     if (spanHead === null) {
       const probabilities: number[] = [];
-      for (const window of contentWindows(tokenizer.encode(text))) probabilities.push((await runWindow(window)).probability);
+      for (const window of contentWindows(tokenizer.encode(text))) probabilities.push(runWindow(window).probability);
       return { score: combineWindows(probabilities), tokens: null };
     }
     const { ids, offsets } = tokenizer.encodeWithOffsets(text);
     if (ids.length === 0) {
-      return { score: combineWindows([(await runWindow([])).probability]), tokens: { ids, offsets, windows: [], probabilities: [] } };
+      return { score: combineWindows([runWindow([]).probability]), tokens: { ids, offsets, windows: [], probabilities: [] } };
     }
     const windows = spanWindows(ids.length, modelConfig.max_tokens, modelConfig.stride);
     const gate: number[] = [];
     const probabilities: number[][][] = [];
     for (const w of windows) {
-      const { probability, rows } = await runWindow(ids.slice(w.start, w.end));
+      const { probability, rows } = runWindow(ids.slice(w.start, w.end));
       gate.push(probability);
       probabilities.push(rows ?? []);
     }
@@ -199,6 +212,7 @@ export async function createGateModel(
   return {
     tokenizer,
     spanHead,
+    engine,
     analyze,
     async score(text) {
       return (await analyze(text)).score;
