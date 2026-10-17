@@ -29,7 +29,7 @@ export type GateEngine = {
 export type EngineKernel = "unrolled" | "compact";
 
 export type EngineOptions = {
-  /** Default `"auto"`: time a short synthetic forward with each kernel at load and keep the faster one. */
+  /** Default `"auto"`: time a short synthetic forward with each kernel at load (~4 forwards) and keep the faster one. */
   readonly kernel?: EngineKernel | "auto";
 };
 
@@ -260,12 +260,12 @@ export async function createEngine(
   };
 }
 
-const CALIBRATION_IDS: readonly number[] = Array.from({ length: 48 }, (_, i) => (i === 0 ? 2 : i === 47 ? 3 : 1000 + ((i * 7919) % 20000)));
+const CALIBRATION_IDS: readonly number[] = Array.from({ length: 24 }, (_, i) => (i === 0 ? 2 : i === 23 ? 3 : 1000 + ((i * 7919) % 20000)));
 
-/** Best-of-3 timing of a 48-token forward per kernel; ties go to `"unrolled"`. Output does not depend on the choice. */
+/** Best-of-2 timing of a 24-token forward per kernel; ties go to `"unrolled"`. Output does not depend on the choice. */
 function calibrateKernel(run: GateEngine["run"], select: (kernel: EngineKernel) => void): EngineKernel {
   const best: Record<EngineKernel, number> = { unrolled: Infinity, compact: Infinity };
-  for (let round = 0; round < 3; round++) {
+  for (let round = 0; round < 2; round++) {
     for (const kernel of ["unrolled", "compact"] as const) {
       select(kernel);
       const t = now();
