@@ -6,7 +6,7 @@ import { Gate } from "../src/gate";
 import type { GateEngine } from "../src/engine";
 import { createGateModel, GateModelError, sha256Hex, type ModelConfig } from "../src/model";
 import { createRedactor } from "../src/redactor";
-import { decodeSpans, deterministicUnion } from "../src/spans";
+import { decodeSpans, deterministicUnion, type RedactedSpanType } from "../src/spans";
 import { createWorkerGate, registerGateWorker, type WorkerPort } from "../src/worker";
 
 const vocab = readFileSync(new URL("../model/vocab.txt", import.meta.url));
@@ -111,6 +111,157 @@ describe("joint gate + span head", () => {
     const text = "Reach me at five five five, oh one four eight";
     const span = { start: 12, end: text.length, type: "PHONE", probability: 0.9, source: "model" } as const;
     expect(deterministicUnion(text, [span])).toEqual([span]);
+  });
+
+  describe("identifier widening", () => {
+    const at = (text: string, part: string) => [text.indexOf(part), text.indexOf(part) + part.length] as const;
+    const model = (text: string, part: string, type: RedactedSpanType) => {
+      const [start, end] = at(text, part);
+      return { start, end, type, probability: 0.8, source: "model" } as const;
+    };
+    const spanOf = (text: string, part: string) => {
+      const [start, end] = at(text, part);
+      return expect.objectContaining({ start, end });
+    };
+
+    it("widens a partial identifier span to the whole identifier", () => {
+      const text = "Account reference CU-4147-4452 was closed.";
+      expect(deterministicUnion(text, [model(text, "4147", "OTHER_ID")])).toEqual([spanOf(text, "CU-4147-4452")]);
+    });
+
+    it("widens a partial profile URL but leaves wrapping brackets and sentence punctuation", () => {
+      const text = "See the profile (https://www.facebook.com/dana.whitfield.272).";
+      const out = deterministicUnion(text, [model(text, "dana.whitfield", "URL_HANDLE")]);
+      expect(out).toEqual([spanOf(text, "https://www.facebook.com/dana.whitfield.272")]);
+    });
+
+    it("merges fragments of one token into a single span", () => {
+      const text = "Case No. 1:23-cv-04417-JMF is set for hearing";
+      const out = deterministicUnion(text, [model(text, "23-cv", "OTHER_ID"), model(text, "JMF", "OTHER_ID")]);
+      expect(out).toEqual([spanOf(text, "1:23-cv-04417-JMF")]);
+    });
+
+    it("does not cross whitespace", () => {
+      const text = "posts as @dwhitfield_88 daily";
+      expect(deterministicUnion(text, [model(text, "whitfield", "URL_HANDLE")])).toEqual([spanOf(text, "@dwhitfield_88")]);
+    });
+
+    it("widens a profile URL to the URL the validators found, without angle brackets", () => {
+      const text = "see <https://facebook.com/dana.w.272> ok";
+      expect(deterministicUnion(text, [model(text, "dana", "URL_HANDLE")])).toEqual([spanOf(text, "https://facebook.com/dana.w.272")]);
+    });
+
+    it("stops at a glued label, list separators, quotes and brackets", () => {
+      for (const text of [
+        "Claim:CU-4147-4452;Agency:FEMA;Status:Closed",
+        '{"case":"CU-4147-4452","agency":"FEMA","status":"closed"}',
+        "ids: CU-4147-4452,CU-9999-0000,FEMA-PUBLIC-LINE",
+        "see [CU-4147-4452] in the file",
+        "Hamilton/CU-4147-4452 filed",
+        "X\u200bCU-4147-4452\u200bY",
+      ]) {
+        expect(deterministicUnion(text, [model(text, "4147", "OTHER_ID")]), text).toEqual([spanOf(text, "CU-4147-4452")]);
+      }
+    });
+
+    it("never widens into text a validator owns, or takes its label", () => {
+      const text = "My SSN:452-78-1934 and ref REF-452-78-1934-B";
+      const out = deterministicUnion(text, [model(text, "REF", "OTHER_ID")]);
+      expect(out.map((s) => text.slice(s.start, s.end))).not.toContain("SSN:452-78-1934");
+      expect(out.every((s) => !text.slice(s.start, s.end).includes("SSN"))).toBe(true);
+    });
+
+    it("leaves a span inside a long unbroken run as the model marked it", () => {
+      const text = `data ${"ab1".repeat(100)} end`;
+      const span = { start: 50, end: 54, type: "OTHER_ID", probability: 0.8, source: "model" } as const;
+      expect(deterministicUnion(text, [span])).toEqual([span]);
+    });
+
+    it("completes an id or handle the head labelled PHONE or EMAIL, without taking a glued label", () => {
+      const none = { block: false, hard: [], soft: [] };
+      const phone = "Call FEMA:1-800-621-3362 today";
+      expect(deterministicUnion(phone, [model(phone, "800-621", "PHONE")], none)).toEqual([spanOf(phone, "1-800-621-3362")]);
+      const handle = "posts as @wokafor_92 daily";
+      expect(deterministicUnion(handle, [model(handle, "ka", "EMAIL")])).toEqual([spanOf(handle, "@wokafor_92")]);
+    });
+
+    it("treats a date as a wall", () => {
+      const text = "Tax number 4471209935_03/14/1999 on file";
+      expect(deterministicUnion(text, [model(text, "44712", "GOV_ID")])).toEqual([spanOf(text, "4471209935")]);
+    });
+
+    it("does not grow over a plain word, only over a run that has a digit", () => {
+      for (const [text, part, type] of [
+        ["From: Whitfield, Dana J", "Whit", "EMAIL"],
+        ["the Grant application", "G", "GOV_ID"],
+        ["met Anne-Marie today", "-", "EMAIL"],
+      ] as const) {
+        const span = model(text, part, type);
+        expect(deterministicUnion(text, [span]), text).toEqual([span]);
+      }
+      const mixed = "SSN 5512 884301 - Kreditkarten";
+      const span = model(mixed, "884301 - K", "FINANCIAL");
+      expect(deterministicUnion(mixed, [span], { block: false, hard: [], soft: [] })).toEqual([span]);
+    });
+
+    it("still completes a handle that has no digit", () => {
+      const at = "follow @janedoe please";
+      expect(deterministicUnion(at, [model(at, "aned", "EMAIL")])).toEqual([spanOf(at, "@janedoe")]);
+      const bare = "posts as janedoe daily";
+      expect(deterministicUnion(bare, [model(bare, "aned", "URL_HANDLE")])).toEqual([spanOf(bare, "janedoe")]);
+    });
+
+    it("stops at an ordinary word glued after the identifier with no space", () => {
+      const none = { block: false, hard: [], soft: [] };
+      for (const [text, part, whole] of [
+        ["my case number is 73015289nDear Sir", "7301", "73015289"],
+        ["Loan number 8841-4147Wells Fargo said", "8841", "8841-4147"],
+      ] as const) {
+        expect(deterministicUnion(text, [model(text, part, "OTHER_ID")], none), text).toEqual([spanOf(text, whole)]);
+      }
+    });
+
+    it("keeps letters that belong to the identifier", () => {
+      for (const [text, part, whole] of [
+        ["policy KAH9180689 is active", "9180", "KAH9180689"],
+        ["docket 1:23-cv-04417-JMF today", "04417", "1:23-cv-04417-JMF"],
+        ["hash a3f9c21d7e on file", "3f9c", "a3f9c21d7e"],
+        ["token 7d19f3cabcd issued", "7d19", "7d19f3cabcd"],
+        ["session 4c1e-9a2f-77b0dead ok", "4c1e", "4c1e-9a2f-77b0dead"],
+        ["ref CU4147 ok", "4147", "CU4147"],
+        ["unit 4147b ok", "414", "4147b"],
+      ] as const) {
+        expect(deterministicUnion(text, [model(text, part, "OTHER_ID")]), text).toEqual([spanOf(text, whole)]);
+      }
+    });
+
+    it("completes a username whatever part of it the head marked", () => {
+      for (const [text, part, type, whole] of [
+        ["My personal Instagram username is maplequill47.", "47", "OTHER_ID", "maplequill47"],
+        ["login is jsmith1985 on the portal", "1985", "OTHER_ID", "jsmith1985"],
+        ["account acct44719 was closed", "447", "OTHER_ID", "acct44719"],
+        ["follow @meitanaka75 now", "75", "EMAIL", "@meitanaka75"],
+      ] as const) {
+        expect(deterministicUnion(text, [model(text, part, type)]), text).toEqual([spanOf(text, whole)]);
+      }
+    });
+
+    it("counts a digit in any script", () => {
+      const text = "ref CU-\u0664\u0661\u0664\u0667 noted";
+      expect(deterministicUnion(text, [model(text, "\u0664\u0661", "OTHER_ID")])).toEqual([spanOf(text, "CU-\u0664\u0661\u0664\u0667")]);
+    });
+
+    it("can be switched off", () => {
+      const text = "Account reference CU-4147-4452 was closed.";
+      const span = model(text, "4147", "OTHER_ID");
+      expect(deterministicUnion(text, [span], undefined, false)).toEqual([span]);
+    });
+
+    it("leaves multi-word types alone", () => {
+      const text = "Plaintiff Dana-Marie Whitfield appeared";
+      const span = model(text, "Marie Whitfield", "NAME");
+      expect(deterministicUnion(text, [span])).toEqual([span]);
+    });
   });
 
   it("redacts with the gate's span head and downloads nothing", async () => {

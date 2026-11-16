@@ -78,6 +78,9 @@ COOP/COEP, `model.rmpw` fetched over HTTP, p50 of 20 full `gate.check` calls) [M
 - `__tests__/package.test.ts`: inlined wasm = `runtime/rampart-engine.wasm` = `config.engine` pin; file pins = files.
 - `.github/workflows/ci.yml`: `bun install`, `bun run test`, `type-check`, `build`.
 - `tools/browser-smoke/`: Playwright page + Worker smoke of `dist/` over plain HTTP (no COOP/COEP).
+- `spans`: a model span that covers part of an identifier or a profile URL is widened to the whole identifier or URL
+  (`snapToIdentifiers`, next to `snapToDates`). Verdicts are decided before widening and do not change.
+  `dist/index.js` Brotli +929 B [MEASURED].
 
 ## 2.0.5 and earlier
 
