@@ -78,6 +78,9 @@ COOP/COEP, `model.rmpw` fetched over HTTP, p50 of 20 full `gate.check` calls) [M
 - `__tests__/package.test.ts`: inlined wasm = `runtime/rampart-engine.wasm` = `config.engine` pin; file pins = files.
 - `.github/workflows/ci.yml`: `bun install`, `bun run test`, `type-check`, `build`.
 - `tools/browser-smoke/`: Playwright page + Worker smoke of `dist/` over plain HTTP (no COOP/COEP).
+- `validators`: an @handle in a URL (`https://www.tiktok.com/@jane.doe`) matched the email rule and was reported as an
+  `EMAIL` span that started inside the scheme. It is now a `URL_HANDLE` span over the handle, rule id `url-handle`.
+  Strength and verdicts are unchanged. `dist/index.js` Brotli +150 B [MEASURED].
 
 ## 2.0.5 and earlier
 

@@ -691,6 +691,14 @@ const EMAIL_RE =
 const ROLE_LOCAL =
   /^(info|hello|hi|help|support|contact|contactus|press|media|news|foia|webmaster|postmaster|hostmaster|noreply|no-reply|donotreply|do-not-reply|admin|office|service|services|customerservice|customer-service|privacy|accessibility|feedback|comments|questions|public|publicaffairs|inquiries|enquiries|sales|billing|orders|careers|jobs|hr|recruiting|legal|security|abuse|team|marketing|newsletter|events|editor|tips|outreach|communications|appointments|reservations|scheduling|intake|volunteer|ombudsman|complaints|hola|contacto|prensa|ayuda|soporte|kontakt|presse)$/i;
 export const isGovEmail = (d: Detection): boolean => d.label === "EMAIL" && /\.(gov|mil)$/i.test(d.value);
+/**
+ * An email's local part may contain / ? # = &, which are also URL punctuation. So "https://www.tiktok.com/@jane.doe"
+ * matches as the address "//www.tiktok.com/@jane.doe". When the local part ends in one of those characters, the match
+ * is really a URL that ends in an @handle. It stays as strong as before but is reported as "url-handle", and after
+ * "//host/" a hard hit starts past the host.
+ */
+const URL_HANDLE_LOCAL = /[/?#=&]$/;
+const URL_HOST_PREFIX = /^\/\/[^/?#=&]*\//;
 export function detectEmail(n: Norm): Detection[] {
   const out: Detection[] = [];
   for (const m of n.text.matchAll(EMAIL_RE)) {
@@ -698,16 +706,19 @@ export function detectEmail(n: Norm): Detection[] {
       domain = m[2].toLowerCase();
     const gov = /\.(gov|mil)$/.test(domain);
     const role = ROLE_LOCAL.test(local);
+    const urlHandle = URL_HANDLE_LOCAL.test(local);
+    const hard = !role && !gov;
+    const skip = urlHandle && hard ? (URL_HOST_PREFIX.exec(local)?.[0].length ?? 0) : 0;
     out.push(
       det(
         n,
         "EMAIL",
-        m.index!,
+        m.index! + skip,
         m.index! + m[0].length,
-        m[0],
-        !role && !gov,
-        `rfc5322-practical${gov ? ";gov-domain" : ""}${role ? ";role-mailbox" : ""}`,
-        "email",
+        m[0].slice(skip),
+        hard,
+        `rfc5322-practical${gov ? ";gov-domain" : ""}${role ? ";role-mailbox" : ""}${urlHandle ? ";url-handle" : ""}`,
+        urlHandle ? "url-handle" : "email",
       ),
     );
   }

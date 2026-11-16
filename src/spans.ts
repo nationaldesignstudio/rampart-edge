@@ -271,11 +271,11 @@ export function decodeSpans(
   return { spans: mergePredicted(chars, trimSpans(chars, decode(tokens.offsets, ids, scores, labels))).map(toSpan), windows: snapped };
 }
 
-/** Validator hard hits of the structured types. */
+/** Validator hard hits of the structured types. An @handle in a URL comes from the email rule but is typed `URL_HANDLE`. */
 function validatorSpans(dets: GateResult): Span[] {
   const out: Span[] = [];
   for (const d of dets.hard) {
-    const type = VALIDATOR_TYPES[d.label];
+    const type = d.rule === "url-handle" ? "URL_HANDLE" : VALIDATOR_TYPES[d.label];
     if (type) out.push({ start: d.start, end: d.end, type, score: 1, source: "validator", rule: d.rule });
   }
   return out;
