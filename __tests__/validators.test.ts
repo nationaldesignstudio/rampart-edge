@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { detect, gate, type Label } from "../src/validators/index";
+import { detect, detectAll, gate, type Label } from "../src/validators/index";
 
 const hardLabels = (t: string) =>
   detect(t)
@@ -96,6 +96,39 @@ describe("Rampart Edge validators (r2 port)", () => {
       ["EMAIL", false],
     ]);
     expect(hardLabels("write to jsmith@irs.gov.example.com")).toEqual(["EMAIL"]);
+  });
+
+  it("reports an @handle in a URL as a handle, as strong as before, without the host", () => {
+    const text = "Their page is https://www.tiktok.com/@jane.doe today";
+    expect(detect(text).filter((d) => d.label === "EMAIL").map((d) => [text.slice(d.start, d.end), d.hard, d.rule])).toEqual([
+      ["@jane.doe", true, "url-handle"],
+    ]);
+    expect(gate(text).block).toBe(true);
+    for (const [url, hidden] of [
+      ["https://medium.com/@jane.doe/my-post-123", "@jane.doe"],
+      ["https://site.com/page?u=@jane.doe", "page?u=@jane.doe"],
+      ["https://site.com/jane.roe/@profile.page", "jane.roe/@profile.page"],
+      ["tiktok.com/@jane.doe", "tiktok.com/@jane.doe"],
+      ["contact jane.roe/@profile.page today", "jane.roe/@profile.page"],
+    ] as const) {
+      const [d] = detect(url).filter((x) => x.rule === "url-handle");
+      expect([url.slice(d.start, d.end), d.hard], url).toEqual([hidden, true]);
+    }
+  });
+
+  it("keeps a .gov handle in a URL soft, and every real address as it was", () => {
+    const gov = "see https://www.youtube.com/@NASA.gov";
+    expect(gate(gov).block).toBe(false);
+    expect(detectAll(gov).filter((d) => d.label === "EMAIL").map((d) => [gov.slice(d.start, d.end), d.hard, d.rule])).toEqual([
+      ["//www.youtube.com/@NASA.gov", false, "url-handle"],
+    ]);
+    for (const [text, value] of [
+      ["https://example.com/u/jane@gmail.com", "//example.com/u/jane@gmail.com"],
+      ["write to sales/support@company.com", "sales/support@company.com"],
+      ["mail jane.roe@gmail.com", "jane.roe@gmail.com"],
+    ] as const) {
+      expect(detect(text).filter((d) => d.label === "EMAIL").map((d) => [d.value, d.hard, d.rule]), text).toEqual([[value, true, "email"]]);
+    }
   });
 
   it("treats an ombudsman mailbox as a role mailbox (soft)", () => {
