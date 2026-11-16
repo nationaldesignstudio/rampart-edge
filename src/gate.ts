@@ -45,6 +45,10 @@ export class Gate {
     return this.allowlist.applyToValidators(validatorGate(text));
   }
 
+  /**
+   * Runs the validators, then the model. The allowlist looks at the spans exactly as the model marked them, so
+   * widening cannot change a verdict. The widened spans are only what gets reported.
+   */
   async check(text: string): Promise<GateDecision> {
     const validators = this.validators(text);
     if (this.model === null) return decide(validators, null, this.threshold);
@@ -53,11 +57,13 @@ export class Gate {
     const head = this.model.spanHead;
     if (head === null || tokens === null) return decision;
     const { spans } = decodeSpans(text, tokens, head.labels, head.threshold);
-    const { kept, allowed } = this.allowlist.filterSpans(text, deterministicUnion(text, spans, validators), validators);
+    const { kept, allowed } = this.allowlist.filterSpans(text, deterministicUnion(text, spans, validators, false), validators);
     if (decision.verdict === "BLOCK" && !validators.block && kept.length === 0 && allowed.length > 0) {
       return { ...decision, verdict: "ALLOW", basis: "allowlist", spans: kept };
     }
-    return { ...decision, spans: kept };
+    if (kept.length === 0) return { ...decision, spans: kept };
+    const widened = deterministicUnion(text, spans, validators).filter((w) => kept.some((k) => k.start < w.end && w.start < k.end));
+    return { ...decision, spans: widened };
   }
 }
 

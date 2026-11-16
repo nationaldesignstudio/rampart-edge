@@ -104,7 +104,7 @@ result.spans; // [{ start, end, type, probability, source }, ...] with UTF-16 of
 ```
 
 - Decode: each token takes its most likely label (`span_threshold: null`). Windows of 384 tokens, stride 96; overlapping windows hand over at a token both label O, so no span is cut in two.
-- Model spans and validator hits cover their union: validator hits keep their type (`GOV_ID`, `FINANCIAL`, `PHONE`, `EMAIL`), and a model span that overlaps a validator hit keeps only the part outside it. A date next to a birth keyword (`DOB`, `date of birth`, `born`) is a deterministic `DOB_KEYED` span, and a model span that covers part of a date is widened to the whole date.
+- Model spans and validator hits cover their union: validator hits keep their type (`GOV_ID`, `FINANCIAL`, `PHONE`, `EMAIL`), and a model span that overlaps a validator hit keeps only the part outside it. A date next to a birth keyword (`DOB`, `date of birth`, `born`) is a deterministic `DOB_KEYED` span, and a model span that covers part of a date is widened to the whole date. A model span that covers part of an identifier or a profile URL is widened the same way, to the whole identifier or URL. It never grows into a date or a validator hit, and gate verdicts are decided before widening, so they do not change.
 - Span types:
 
 | type | what it covers |

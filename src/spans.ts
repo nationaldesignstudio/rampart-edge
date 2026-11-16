@@ -305,6 +305,101 @@ function snapToDates(model: readonly Span[], dates: readonly Span[]): Span[] {
   });
 }
 
+/** URLs found by the validators. A span that covers part of a profile URL grows to the whole URL. */
+function urlShapes(dets: GateResult): Span[] {
+  return [...dets.hard, ...dets.soft]
+    .filter((d) => d.label === "URL")
+    .map((d): Span => ({ start: d.start, end: d.end, type: "URL_HANDLE", score: 1, source: "validator", rule: d.rule }));
+}
+
+/**
+ * Span types that hold a single token, such as an account number or a handle. PHONE and EMAIL are included because the
+ * validators already catch every complete phone and email, so what the model labels that way elsewhere is usually an
+ * id or a handle.
+ */
+const IDENTIFIER_TYPES = new Set<RedactedSpanType>(["GOV_ID", "FINANCIAL", "URL_HANDLE", "OTHER_ID", "EMAIL", "PHONE"]);
+/** The types the model uses for profile URLs and handles. */
+const HANDLE_TYPES = new Set<RedactedSpanType>(["URL_HANDLE", "EMAIL"]);
+/** A span grows at most this many characters on each side. Anything longer is a blob such as base64, not an id. */
+const MAX_WIDEN = 64;
+/** Four letters that read as a word ("Dear", "said"). Shorter or all-caps runs ("KAH", "b") can be part of an id. */
+const WORD_RE = /\p{Lu}\p{Ll}{3}|\p{Ll}{4}/u;
+
+const isIdChar = (c: string | undefined): boolean => c !== undefined && /[\p{L}\p{N}]/u.test(c);
+const isLetter = (c: string | undefined): boolean => c !== undefined && /\p{L}/u.test(c);
+const isAsciiDigit = (c: string | undefined): boolean => c !== undefined && c >= "0" && c <= "9";
+
+/** True when `chars[i]` is punctuation inside an identifier: - _ . always, : and / only between two digits ("1:23-cv-04417"). */
+function joinsIdentifier(chars: readonly string[], i: number): boolean {
+  const c = chars[i];
+  if (!isIdChar(chars[i - 1]) || !isIdChar(chars[i + 1])) return false;
+  if (c === "-" || c === "_" || c === ".") return true;
+  return (c === ":" || c === "/") && isAsciiDigit(chars[i - 1]) && isAsciiDigit(chars[i + 1]);
+}
+
+/**
+ * When a space is missing, the next word sticks to the id ("73015289nDear"). Given the part [from, to) a span gained
+ * on its right, returns where the id really ends: letters after a digit are cut off when they read as a word. A hex
+ * string is kept whole ("7d19f3cabcd"), and so are capitals in front of the word ("ABCDear" keeps "ABC").
+ */
+function cutGluedWord(chars: readonly string[], from: number, to: number): number {
+  let tail = to;
+  while (tail > from && isLetter(chars[tail - 1])) tail -= 1;
+  const letters = chars.slice(tail, to).join("");
+  if (tail === to || !isAsciiDigit(chars[tail - 1]) || !WORD_RE.test(letters) || /^[a-fA-F]+$/.test(letters)) return to;
+  let word = tail;
+  while (word < to && !/\p{Ll}/u.test(chars[word])) word += 1;
+  return word > tail && /\p{Lu}/u.test(chars[word - 1]) ? word - 1 : word;
+}
+
+/**
+ * The model labels word pieces, so it often marks only part of an identifier and the rest stays readable
+ * ("CU-4147[REDACTED]4452"). This grows such a span to the whole identifier, as `snapToDates` does for dates:
+ * - a handle span that overlaps a URL found by the validators takes the whole URL;
+ * - any other span grows over the letters, digits and joining punctuation around it, and over a handle's leading @.
+ * A side keeps what it gained only if that text has a digit, so a span never swallows a plain word. Handles are
+ * exempt. A span never grows into a `wall` (a date, or text a validator owns). Spans only get longer: none is added
+ * or removed.
+ */
+function snapToIdentifiers(chars: readonly string[], model: readonly Span[], urls: readonly Span[], walls: readonly Span[]): Span[] {
+  const walled = new Uint8Array(chars.length);
+  for (const w of walls) walled.fill(1, w.start, w.end);
+  const free = (i: number) => walled[i] !== 1;
+  const inRun = (i: number) => free(i) && (isIdChar(chars[i]) || joinsIdentifier(chars, i));
+  const hasDigit = (from: number, to: number) => chars.slice(from, to).some((c) => /\p{Nd}/u.test(c));
+  return model.map((s) => {
+    if (!IDENTIFIER_TYPES.has(s.type)) return s;
+    let { start, end } = s;
+    if (HANDLE_TYPES.has(s.type)) {
+      for (const u of urls) {
+        if (u.start < end && start < u.end) {
+          start = Math.min(start, u.start);
+          end = Math.max(end, u.end);
+        }
+      }
+      if (start !== s.start || end !== s.end) return { ...s, start, end };
+    }
+    while (start > 0 && s.start - start <= MAX_WIDEN && inRun(start - 1)) start -= 1;
+    while (end < chars.length && end - s.end <= MAX_WIDEN && inRun(end)) end += 1;
+    if (s.start - start > MAX_WIDEN || end - s.end > MAX_WIDEN) return s;
+    // Drop punctuation left dangling at either end.
+    while (start < s.start && !isIdChar(chars[start])) start += 1;
+    while (end > s.end && !isIdChar(chars[end - 1])) end -= 1;
+    const atHandle = HANDLE_TYPES.has(s.type) && chars[start - 1] === "@" && free(start - 1) && !isIdChar(chars[start - 2]);
+    if (s.type !== "URL_HANDLE" && !atHandle) {
+      let leftRunEnd = s.start;
+      while (leftRunEnd < end && inRun(leftRunEnd)) leftRunEnd += 1;
+      if (!hasDigit(start, leftRunEnd)) start = s.start;
+      let rightRunStart = s.end;
+      while (rightRunStart > start && inRun(rightRunStart - 1)) rightRunStart -= 1;
+      if (!hasDigit(rightRunStart, end)) end = s.end;
+      end = cutGluedWord(chars, s.end, end);
+    }
+    if (atHandle) start -= 1;
+    return { ...s, start, end };
+  });
+}
+
 /** Model spans with the validator intervals cut out (whitespace at the cut trimmed), so every validator hit is reported with its own type. */
 function subtract(chars: readonly string[], model: readonly Span[], validators: readonly Span[]): Span[] {
   const out: Span[] = [];
@@ -331,12 +426,19 @@ function subtract(chars: readonly string[], model: readonly Span[], validators: 
 
 /**
  * Model spans unioned with the deterministic pass: structured validator hits (which own the text they cover),
- * keyed dates of birth, and model spans widened to whole dates. A model span overlapping a validator hit keeps the part outside it.
+ * keyed dates of birth, and model spans widened to whole identifiers and whole dates. A model span overlapping a
+ * validator hit keeps the part outside it. `widenIdentifiers: false` leaves identifier spans as the model marked them.
  */
-export function deterministicUnion(text: string, modelSpans: readonly RedactedSpan[], dets: GateResult = validatorGate(text)): RedactedSpan[] {
-  const dates = dateShapes(dets);
-  const model = snapToDates(modelSpans.map(fromSpan), dates);
-  const validators = [...validatorSpans(dets), ...dates.filter((d) => d.type === "DOB_KEYED")];
+export function deterministicUnion(
+  text: string,
+  modelSpans: readonly RedactedSpan[],
+  dets: GateResult = validatorGate(text),
+  widenIdentifiers = true,
+): RedactedSpan[] {
   const chars = text.split("");
+  const dates = dateShapes(dets);
+  const validators = [...validatorSpans(dets), ...dates.filter((d) => d.type === "DOB_KEYED")];
+  const marked = modelSpans.map(fromSpan);
+  const model = snapToDates(widenIdentifiers ? snapToIdentifiers(chars, marked, urlShapes(dets), [...validators, ...dates]) : marked, dates);
   return mergeSpans(chars, [...subtract(chars, model, validators), ...validators]).map(toSpan);
 }

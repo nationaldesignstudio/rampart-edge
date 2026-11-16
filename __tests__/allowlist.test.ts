@@ -39,6 +39,19 @@ describe("allowlist", () => {
     expect(await gate.check(text)).toMatchObject({ verdict: "ALLOW", basis: "allowlist", spans: [] });
   });
 
+  it("allows a listed number glued to a label, whatever the reported spans widen to", async () => {
+    for (const text of ["Call FEMA:1-800-621-3362 for help with my application", "Is the IRS line (IRS:800-829-1040) open today?"]) {
+      expect(await gate.check(text), text).toMatchObject({ verdict: "ALLOW", basis: "allowlist", spans: [] });
+    }
+  });
+
+  it("reports the widened spans on a block", async () => {
+    const text = "Contact help@irs.gov,my id is CU-4147-4452";
+    const decision = await gate.check(text);
+    expect(decision.verdict).toBe("BLOCK");
+    expect(decision.spans?.map((s) => text.slice(s.start, s.end))).toEqual(["CU-4147-4452"]);
+  });
+
   it("still blocks a private name next to an allowlisted one, and returns only the private span", async () => {
     const text = "Write a story about Alexander Hamilton and my landlord Marcus Delgado";
     const decision = await gate.check(text);
